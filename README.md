@@ -27,7 +27,8 @@ fleet_management/
 │   ├── 1_Map_and_Data.py           # Interactive map & data configuration
 │   ├── 2_MDVRP_Solver.py           # MDVRP solver with route map visualization
 │   ├── 3_FSMVRP_Optimizer.py       # Fleet optimizer & sensitivity analysis
-│   └── 4_Mathematical_Models.py    # Full mathematical documentation
+│   ├── 4_Mathematical_Models.py    # Full mathematical documentation
+│   └── 5_Route_Timeline.py         # Delivery schedule and pallet tracking
 └── utils/
     ├── __init__.py
     ├── data_models.py              # Data classes + Bucharest sample data
@@ -130,7 +131,13 @@ $$\text{depot}(i) = \arg\min_{d \in D} \; \text{Haversine}(d, i)$$
 - Sensitivity analysis across demand range (50%–150%)
 - Pareto-style vehicles vs cost visualization
 
-### Module 4 — Mathematical Models
+### Module 4 — Route Timeline
+- Detailed delivery schedule with arrival/departure times
+- Pallet tracking per stop
+- Reload logic for routes exceeding vehicle capacity
+- Route duration and total distance metrics
+
+### Module 5 — Mathematical Models
 - Full MDVRP and FSMVRP formulations with LaTeX
 - Algorithm pseudocode and complexity analysis
 - Performance metrics with formulas

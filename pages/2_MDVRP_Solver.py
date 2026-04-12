@@ -42,7 +42,7 @@ with st.sidebar:
     - Cost per km: {selected_vt.cost_per_km} €
     """)
 
-    run_btn = st.button("▶ Run MDVRP", type="primary", use_container_width=True)
+    run_btn = st.button("▶ Run MDVRP", type="primary", width='stretch')
 
 # ── Solve ─────────────────────────────────────────────────────────────────────
 if run_btn:
@@ -118,7 +118,7 @@ if "routes" in st.session_state and st.session_state.routes:
             if val >= 50: return "background-color: #fff3cd"
             return "background-color: #f8d7da"
 
-        st.dataframe(df.style.applymap(color_util, subset=["Utilization (%)"]),
+        st.dataframe(df.style.map(color_util, subset=["Utilization (%)"]),
                      use_container_width=True, hide_index=True)
 
         st.markdown("**Per-depot summary:**")

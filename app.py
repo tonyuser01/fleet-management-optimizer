@@ -57,6 +57,7 @@ Use the left sidebar to access the application modules:
 - **🗺️ Map & Data** — Configure depots and customers on a real interactive map
 - **📐 MDVRP Solver** — Run routing algorithms with route visualization on map
 - **🚛 FSMVRP Optimizer** — Optimize fleet composition with sensitivity analysis
+- **🕐 Route Timeline** — Step-by-step delivery schedule and pallet tracking
 - **📖 Mathematical Models** — Full mathematical documentation with formulas
 """)
 

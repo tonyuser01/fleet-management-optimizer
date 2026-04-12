@@ -29,7 +29,7 @@ with st.sidebar:
         "balanced":     "Balanced fleet utilization"
     }[x])
     max_veh  = st.slider("Maximum vehicles allowed", 3, 20, 12)
-    run_btn  = st.button("▶ Optimize fleet", type="primary", use_container_width=True)
+    run_btn  = st.button("▶ Optimize fleet", type="primary", width='stretch')
 
 if run_btn:
     with st.spinner("Computing optimal fleet configuration..."):
@@ -42,22 +42,26 @@ if run_btn:
     st.session_state.fsm_top20 = top20
     st.session_state.fsm_sens  = sens
 
-if "fsm_best" in st.session_state:
+if st.session_state.get("fsm_best") is not None:
     best  = st.session_state.fsm_best
     top20 = st.session_state.fsm_top20
     sens  = st.session_state.fsm_sens
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("💰 Total cost",       f"{best.total_cost:.0f} €")
-    c2.metric("💶 Fixed cost",       f"{best.fixed_cost:.0f} €")
-    c3.metric("🛣️ Variable cost",   f"{best.variable_cost:.0f} €")
-    c4.metric("🚛 Vehicles used",    best.total_vehicles)
-    c5.metric("📊 Fleet utilization", f"{best.utilization:.1f}%")
+    if best is None:
+        st.error("🚫 No feasible fleet configuration found.")
+        st.info("Try increasing the **Maximum vehicles allowed** or reducing the **Total demand** in the sidebar.")
+    else:
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("💰 Total cost",       f"{best.total_cost:.0f} €")
+        c2.metric("💶 Fixed cost",       f"{best.fixed_cost:.0f} €")
+        c3.metric("🛣️ Variable cost",   f"{best.variable_cost:.0f} €")
+        c4.metric("🚛 Vehicles used",    best.total_vehicles)
+        c5.metric("📊 Fleet utilization", f"{best.utilization:.1f}%")
 
-    c1b, c2b, c3b = st.columns(3)
-    c1b.metric("📦 Capacity covered",  f"{best.total_capacity:.1f} t")
-    c2b.metric("💸 Cost per tonne",    f"{best.cost_per_ton:.2f} €/t")
-    c3b.metric("💡 Surplus capacity",  f"{best.total_capacity - total_demand:.1f} t")
+        c1b, c2b, c3b = st.columns(3)
+        c1b.metric("📦 Capacity covered",  f"{best.total_capacity:.1f} t")
+        c2b.metric("💸 Cost per tonne",    f"{best.cost_per_ton:.2f} €/t")
+        c3b.metric("💡 Surplus capacity",  f"{best.total_capacity - total_demand:.1f} t")
 
     st.markdown("---")
     t1, t2, t3, t4 = st.tabs([
@@ -69,21 +73,22 @@ if "fsm_best" in st.session_state:
 
     with t1:
         st.subheader("Optimal fleet configuration")
-        rows = best.to_dict()
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        if best is not None:
+            rows = best.to_dict()
+            if rows:
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-        fig_pie = go.Figure(data=[go.Pie(
-            labels=["Fixed cost", "Variable cost"],
-            values=[round(best.fixed_cost), round(best.variable_cost)],
-            hole=0.45, marker_colors=["#E94560", "#3B8BD4"]
-        )])
-        fig_pie.update_layout(title="Total cost breakdown", height=280,
-                               margin=dict(t=40, b=20, l=20, r=20))
-        st.plotly_chart(fig_pie, use_container_width=True)
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=["Fixed cost", "Variable cost"],
+                values=[round(best.fixed_cost), round(best.variable_cost)],
+                hole=0.45, marker_colors=["#E94560", "#3B8BD4"]
+            )])
+            fig_pie.update_layout(title="Total cost breakdown", height=280,
+                                   margin=dict(t=40, b=20, l=20, r=20))
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         alloc = {vt.name: best.allocation.get(vt.id, 0)
-                 for vt in st.session_state.vehicle_types if best.allocation.get(vt.id, 0) > 0}
+                 for vt in st.session_state.vehicle_types if best is not None and best.allocation.get(vt.id, 0) > 0}
         fig_bar = go.Figure(data=[go.Bar(
             x=list(alloc.keys()), y=list(alloc.values()),
             marker_color=["#E94560","#3B8BD4","#1D9E75","#BA7517"],
@@ -169,15 +174,18 @@ $$n_t \in \mathbb{Z}_{\geq 0} \quad \forall t \in T$$
 
 **Notation:** $f_t$ = daily fixed cost, $n_t$ = vehicles used (decision variable),
 $Q_t$ = vehicle capacity, $c_{ij}$ = arc cost, $x_{ijk}$ = binary routing variable.
-        """)
-        st.dataframe(pd.DataFrame([
-            {"Parameter": "|T| — vehicle types",   "Value": len(st.session_state.vehicle_types)},
-            {"Parameter": "D_total — demand (t)",   "Value": f"{total_demand} t"},
-            {"Parameter": "K_max — max vehicles",   "Value": max_veh},
-            {"Parameter": "Optimal total cost",     "Value": f"{best.total_cost:.0f} €"},
-            {"Parameter": "Optimal vehicles used",  "Value": best.total_vehicles},
-        ]), use_container_width=True, hide_index=True)
-
+            """)
+        if best is not None:
+            st.dataframe(pd.DataFrame([
+                {"Parameter": "|T| — vehicle types",   "Value": len(st.session_state.vehicle_types)},
+                {"Parameter": "D_total — demand (t)",   "Value": f"{total_demand} t"},
+                {"Parameter": "K_max — max vehicles",   "Value": max_veh},
+                {"Parameter": "Optimal total cost",     "Value": f"{best.total_cost:.0f} €"},
+                {"Parameter": "Optimal vehicles used",  "Value": best.total_vehicles},
+            ]), use_container_width=True, hide_index=True)
+elif "fsm_best" in st.session_state:
+    st.error("🚫 No feasible fleet configuration found.")
+    st.info("Try increasing the **Maximum vehicles allowed** or reducing the **Total demand** in the sidebar.")
 else:
     st.info("👈 Set parameters in the sidebar and click **'Optimize fleet'**.")
     st.markdown("""
