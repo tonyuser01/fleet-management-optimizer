@@ -3,7 +3,7 @@ Data models, europallet specifications, and sample Bucharest data
 for the fleet management application.
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict
 import math
 
 
@@ -77,6 +77,8 @@ class VehicleType:
     cargo_length_m: float = 7.2
     cargo_width_m:  float = 2.4
     cargo_height_m: float = 2.7
+    description: str = ""
+    tech_specs: Dict[str, str] = field(default_factory=dict)
 
     @property
     def capacity(self): return self.capacity_tonnes
@@ -120,7 +122,7 @@ class Route:
 
 # ── Sample data: Bucharest distribution network ───────────────────────────────
 
-ROMANIAN_DEPOTS = [
+DEPOTS_BUCHAREST = [
     Depot(0, "Depot Bucharest North",
           lat=44.5500, lon=26.0800,
           address="Șoseaua Pipera 42, Voluntari, Ilfov",
@@ -137,7 +139,7 @@ ROMANIAN_DEPOTS = [
           capacity=500, num_vehicles=4, daily_stock_tonnes=50.0),
 ]
 
-ROMANIAN_CUSTOMERS = [
+CUSTOMERS_BUCHAREST = [
     Customer(0,  "Store District 1",     44.4600, 26.0700, "Calea Victoriei 12, Sector 1",            3.5),
     Customer(1,  "Store District 2",     44.4500, 26.1400, "Bulevardul Ferdinand 80, Sector 2",        2.0),
     Customer(2,  "Store District 3",     44.4300, 26.1600, "Șoseaua Mihai Bravu 220, Sector 3",        4.5),
@@ -163,19 +165,59 @@ ROMANIAN_CUSTOMERS = [
 VEHICLE_FLEET = [
     VehicleType(0, "Small truck (3.5t)",     capacity_tonnes=3.5,  fixed_cost=80,
                 cost_per_km=0.25, max_available=6,
-                cargo_length_m=4.2, cargo_width_m=2.0, cargo_height_m=2.2),
+                cargo_length_m=4.2, cargo_width_m=2.0, cargo_height_m=2.2,
+                description="Ideal for fast urban deliveries and areas with weight restrictions.",
+                tech_specs={
+                    "Model": "Iveco Daily 35C15",
+                    "Configuration": "4x2, Single axle",
+                    "Engine": "2.3L Diesel, 150 HP",
+                    "GVWR": "3,500 kg",
+                    "Net Payload": "~1,200 kg (volumetric 3.5t)",
+                    "Transmission": "Manual, 6-speed"
+                }),
 
     VehicleType(1, "Medium truck (7t)",      capacity_tonnes=7.0,  fixed_cost=130,
                 cost_per_km=0.35, max_available=5,
-                cargo_length_m=6.0, cargo_width_m=2.4, cargo_height_m=2.5),
+                cargo_length_m=6.0, cargo_width_m=2.4, cargo_height_m=2.5,
+                description="Optimal balance between capacity and peri-urban maneuverability.",
+                tech_specs={
+                    "Model": "Mercedes-Benz Atego 818",
+                    "Configuration": "4x2, Rigid",
+                    "Engine Power": "177 HP",
+                    "GVWR": "7,490 kg",
+                    "Fuel Source": "Diesel AdBlue Euro VI",
+                    "Braking System": "Pneumatic, ABS/ASR"
+                }),
 
-    VehicleType(2, "Large truck (14t)",      capacity_tonnes=14.0, fixed_cost=200,
+    VehicleType(2, "Heavy Duty (Volvo FH)",  capacity_tonnes=24.0, fixed_cost=200,
                 cost_per_km=0.45, max_available=3,
-                cargo_length_m=8.0, cargo_width_m=2.4, cargo_height_m=2.7),
+                cargo_length_m=13.6, cargo_width_m=2.48, cargo_height_m=2.7,
+                description="Tractor-trailer combination for high-capacity transport (FTL).",
+                tech_specs={
+                    "Tractor": "Volvo FH D13 42 XA (4x2)",
+                    "Trailer": "Schmitz Cargobull S.PR BAU",
+                    "GVWR (Tractor)": "18,200 kg",
+                    "GCWR (Combination)": "44,000 kg",
+                    "Net Payload": "24,000 kg",
+                    "Pallet Capacity": "34 EUR",
+                    "Internal Length": "13,620 mm",
+                    "Internal Width": "2,480 mm",
+                    "Fifth Wheel Load": "12 t",
+                    "Axle Config": "3 axles (trailer)"
+                }),
 
     VehicleType(3, "Refrigerated truck (5t)",capacity_tonnes=5.0,  fixed_cost=160,
                 cost_per_km=0.50, max_available=2,
-                cargo_length_m=5.5, cargo_width_m=2.2, cargo_height_m=2.4),
+                cargo_length_m=5.5, cargo_width_m=2.2, cargo_height_m=2.4,
+                description="Designed for perishable goods requiring temperature control.",
+                tech_specs={
+                    "Model": "Scania P250 XT",
+                    "Cooling Unit": "Thermo King T-1200R",
+                    "Temp Range": "-20°C to +20°C",
+                    "Insulation": "Reinforced sandwich panels",
+                    "Power Unit": "Diesel/Electric standby",
+                    "GVWR": "12,000 kg"
+                }),
 ]
 
 

@@ -42,7 +42,7 @@ The node set $V$ is partitioned into two distinct subsets:
         ["$m_d$",               "Maximum number of vehicles available at depot $d$ (hard resource constraint)"],
         ["$T_{\\max}$",         "Maximum allowable travel cost/time per route (driver shift or fuel range limit)"],
         ["$u_i$",               "Auxiliary MTZ variable: cumulative load/position along route at node $i$"],
-    ], columns=["Symbol", "Description"]), use_container_width=True, hide_index=True)
+    ], columns=["Symbol", "Description"]), width='stretch', hide_index=True)
 
     st.markdown("---")
     st.subheader("Decision Variables")
@@ -193,7 +193,7 @@ where $M_t$ is the maximum number of vehicles of type $t$ available.
         ["FSMVRP",        "Fixed + Variable", "$\\sum F_k \\cdot x_{0jk} + \\sum c_{ijk} \\cdot x_{ijk}$",
          "Heterogeneous fleet — vehicle type is a decision variable"],
     ], columns=["Model", "Cost type", "Objective", "Key difference"]),
-    use_container_width=True, hide_index=True)
+    width='stretch', hide_index=True)
 
     st.warning("""
 **Key trade-off:** A solution that minimizes total distance may **not** minimize total cost

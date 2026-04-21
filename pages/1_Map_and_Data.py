@@ -9,24 +9,38 @@ from typing import Any, cast
 from streamlit.components.v1 import html as st_html
 
 from utils.data_models import (
-    ROMANIAN_DEPOTS, ROMANIAN_CUSTOMERS, VEHICLE_FLEET,
+    DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET,
     EUROPALLET, Europallet, build_od_matrix, haversine
 )
 from utils.map_utils import build_map, map_to_html
+
+@st.cache_data
+def compute_od_matrix(depots: list, customers: list) -> pd.DataFrame:
+    """Computes the Origin-Destination distance matrix between all nodes."""
+    all_nodes = depots + customers
+    names = [n.name for n in all_nodes]
+    n = len(all_nodes)
+
+    matrix = [[
+        0.0 if i == j else round(haversine(all_nodes[i].lat, all_nodes[i].lon, all_nodes[j].lat, all_nodes[j].lon), 2)
+        for j in range(n)
+    ] for i in range(n)]
+
+    return pd.DataFrame(matrix, index=names, columns=names)
 
 st.title("🗺️ Map, Data & Network Overview")
 st.markdown("Depot and customer directory, europallet specifications, vehicle fleet, and OD distance matrix.")
 
 # ── Session state ─────────────────────────────────────────────────────────────
-if "depots"        not in st.session_state: st.session_state.depots        = ROMANIAN_DEPOTS.copy()
-if "customers"     not in st.session_state: st.session_state.customers     = ROMANIAN_CUSTOMERS.copy()
+if "depots"        not in st.session_state: st.session_state.depots        = DEPOTS_BUCHAREST.copy()
+if "customers"     not in st.session_state: st.session_state.customers     = CUSTOMERS_BUCHAREST.copy()
 if "vehicle_types" not in st.session_state: st.session_state.vehicle_types = VEHICLE_FLEET.copy()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Configuration")
     max_demand = st.slider("Max demand per customer (t)", 1.0, 10.0, 8.0, 0.5)
-    st.session_state.customers = [c for c in ROMANIAN_CUSTOMERS if c.demand <= max_demand]
+    st.session_state.customers = [c for c in CUSTOMERS_BUCHAREST if c.demand <= max_demand]
     st.info(f"Active customers: **{len(st.session_state.customers)}**")
 
     st.markdown("---")
@@ -76,7 +90,7 @@ with tabs[1]:
         "Daily capacity (units)":d.capacity,
         "Daily stock (t)":       d.daily_stock_tonnes,
     } for d in st.session_state.depots])
-    st.dataframe(depot_df, use_container_width=True, hide_index=True)
+    st.dataframe(depot_df, width='stretch', hide_index=True)
 
     st.markdown("---")
     st.subheader("Daily incoming stock per depot")
@@ -103,7 +117,7 @@ with tabs[2]:
         "Time window":     f"{c.time_window_open}:00 – {c.time_window_close}:00",
         "Service time (min)": c.service_time,
     } for c in st.session_state.customers])
-    st.dataframe(store_df, use_container_width=True, hide_index=True)
+    st.dataframe(store_df, width='stretch', hide_index=True)
 
     col1, col2 = st.columns(2)
     demands = [float(cast(Any, c.demand)) for c in st.session_state.customers]
@@ -139,7 +153,7 @@ with tabs[3]:
             ("Volume",       f"{EUROPALLET.volume_m3:.4f} m³"),
             ("Net payload",  f"{pallet_payload} kg (configurable)"),
         ]])
-        st.dataframe(pallet_data, use_container_width=True, hide_index=True)
+        st.dataframe(pallet_data, width='stretch', hide_index=True)
     with col2:
         st.info(f"""
         **Standard EUR/EPAL pallet**
@@ -171,11 +185,28 @@ with tabs[3]:
             "Effective max pallets": effective,
             "Max available":         vt.max_available,
         })
-    st.dataframe(pd.DataFrame(fleet_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(fleet_rows), width='stretch', hide_index=True)
 
     st.caption("**Effective max pallets** = min(floor capacity, weight capacity). "
                "Floor capacity = how many pallets fit on the cargo floor in a single layer. "
                "Weight capacity = payload ÷ (net payload per pallet + pallet weight).")
+
+    st.markdown("---")
+    st.subheader("📑 Technical Fleet Justification")
+    st.info("Technical details and certified specifications for each vehicle type used in the model.")
+
+    for vt in st.session_state.vehicle_types:
+        with st.expander(f"🔍 Detailed Specifications: {vt.name}"):
+            st.write(f"**Description:** {vt.description}")
+            
+            if vt.tech_specs:
+                # Create a table for technical specifications
+                specs_df = pd.DataFrame([
+                    {"Parameter": k, "Details": v} for k, v in vt.tech_specs.items()
+                ])
+                st.table(specs_df)
+            else:
+                st.write("Technical information unavailable.")
 
 # ─── TAB 5: OD MATRIX ─────────────────────────────────────────────────────────
 with tabs[4]:
@@ -184,24 +215,11 @@ with tabs[4]:
     Haversine great-circle distances (km) between all network nodes.
     Rows = origin, Columns = destination.
     """)
-
-    all_nodes = st.session_state.depots + st.session_state.customers
-    names     = [n.name for n in all_nodes]
-    lats      = [n.lat  for n in all_nodes]
-    lons      = [n.lon  for n in all_nodes]
-    n         = len(all_nodes)
-
-    matrix_data = []
-    for i in range(n):
-        row = {}
-        for j in range(n):
-            if i == j:
-                row[names[j]] = 0.0
-            else:
-                row[names[j]] = round(haversine(lats[i], lons[i], lats[j], lons[j]), 2)
-        matrix_data.append(row)
-
-    od_df = pd.DataFrame(matrix_data, index=names)
+    
+    # Optimized with caching to prevent recalculation on every slider change
+    od_df = compute_od_matrix(st.session_state.depots, st.session_state.customers)
+    names = od_df.columns.tolist()
+    n = len(names)
 
     # Color scale: green = short, red = long
     max_dist = od_df.values.max()
@@ -216,7 +234,7 @@ with tabs[4]:
 
     st.dataframe(
         od_df.style.map(color_dist).format("{:.2f}"),
-        use_container_width=True,
+        width='stretch',
         height=500
     )
 
@@ -226,17 +244,12 @@ with tabs[4]:
     st.markdown("---")
     st.subheader("Distance statistics")
     flat = [float(cast(Any, od_df.iloc[i, j])) for i in range(n) for j in range(n) if i != j]
+    
     nd   = len(st.session_state.depots)
-    nc   = len(st.session_state.customers)
-
-    depot_to_cust = [
-        round(haversine(lats[i], lons[i], lats[j], lons[j]), 2)
-        for i in range(nd) for j in range(nd, nd+nc)
-    ]
-    cust_to_cust = [
-        round(haversine(lats[i], lons[i], lats[j], lons[j]), 2)
-        for i in range(nd, nd+nc) for j in range(nd, nd+nc) if i != j
-    ]
+    # Efficiently extract sub-matrices for stats
+    depot_to_cust = od_df.iloc[:nd, nd:].values.flatten()
+    cust_to_cust = od_df.iloc[nd:, nd:].values.flatten()
+    cust_to_cust = [d for d in cust_to_cust if d > 0] # exclude diagonal
 
     c1, c2, c3 = st.columns(3)
     if flat:
@@ -249,6 +262,6 @@ with tabs[4]:
         c3.metric("Avg distance (any)",      "0.00 km")
 
     c4, c5, c6 = st.columns(3)
-    c4.metric("Avg depot→customer",      f"{sum(depot_to_cust)/len(depot_to_cust):.2f} km" if depot_to_cust else "0.00 km")
-    c5.metric("Avg customer→customer",   f"{sum(cust_to_cust)/len(cust_to_cust):.2f} km" if cust_to_cust else "0.00 km")
+    c4.metric("Avg depot→customer",      f"{sum(depot_to_cust)/len(depot_to_cust):.2f} km" if len(depot_to_cust) > 0 else "0.00 km")
+    c5.metric("Avg customer→customer",   f"{sum(cust_to_cust)/len(cust_to_cust):.2f} km" if len(cust_to_cust) > 0 else "0.00 km")
     c6.metric("Total nodes in matrix",   n)

@@ -7,15 +7,15 @@ import pandas as pd
 import time
 from streamlit.components.v1 import html as st_html
 
-from utils.data_models import ROMANIAN_DEPOTS, ROMANIAN_CUSTOMERS, VEHICLE_FLEET
+from utils.data_models import DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET
 from utils.mdvrp_algorithms import solve_mdvrp
 from utils.map_utils import build_map, map_to_html
 
 st.title("📐 MDVRP Solver")
 st.markdown("Run vehicle routing algorithms on a real map and compare algorithm performance.")
 
-if "depots"        not in st.session_state: st.session_state.depots        = ROMANIAN_DEPOTS.copy()
-if "customers"     not in st.session_state: st.session_state.customers     = ROMANIAN_CUSTOMERS.copy()
+if "depots"        not in st.session_state: st.session_state.depots        = DEPOTS_BUCHAREST.copy()
+if "customers"     not in st.session_state: st.session_state.customers     = CUSTOMERS_BUCHAREST.copy()
 if "vehicle_types" not in st.session_state: st.session_state.vehicle_types = VEHICLE_FLEET.copy()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -31,6 +31,8 @@ with st.sidebar:
     vt_sel = st.selectbox("Vehicle type", [vt.name for vt in st.session_state.vehicle_types], index=1)
     selected_vt = next(vt for vt in st.session_state.vehicle_types if vt.name == vt_sel)
     apply_2opt = st.checkbox("Apply 2-opt improvement", value=True)
+    load_balance = st.checkbox("Enable Load Balancing (M_d constraint)", value=True)
+    max_dist = st.number_input("Maximum route distance (km)", value=500.0, step=50.0)
 
     st.markdown("---")
     st.info(f"""
@@ -50,20 +52,20 @@ if run_btn:
         t0 = time.time()
         if algo == "Both (comparison)":
             routes_cw, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                        selected_vt, "clarke_wright", apply_2opt)
+                                        selected_vt, "clarke_wright", apply_2opt, max_dist, load_balance)
             routes_nn, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                        selected_vt, "nearest_neighbor", apply_2opt)
+                                        selected_vt, "nearest_neighbor", apply_2opt, max_dist, load_balance)
             st.session_state.routes       = routes_cw
             st.session_state.routes_nn    = routes_nn
             st.session_state.compare_mode = True
         elif algo == "Clarke-Wright Savings":
             routes, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                    selected_vt, "clarke_wright", apply_2opt)
+                                    selected_vt, "clarke_wright", apply_2opt, max_dist, load_balance)
             st.session_state.routes       = routes
             st.session_state.compare_mode = False
         else:
             routes, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                    selected_vt, "nearest_neighbor", apply_2opt)
+                                    selected_vt, "nearest_neighbor", apply_2opt, max_dist, load_balance)
             st.session_state.routes       = routes
             st.session_state.compare_mode = False
 
@@ -86,6 +88,18 @@ if "routes" in st.session_state and st.session_state.routes:
     c3.metric("🚛 Routes",             len(routes))
     c4.metric("📦 Demand served",      f"{total_dem:.1f} t")
     c5.metric("📊 Avg utilization",    f"{avg_util:.1f}%")
+
+    # Verificare constrângere disponibilitate vehicule (M_d)
+    violations = []
+    for depot in st.session_state.depots:
+        depot_routes = [r for r in routes if r.depot.id == depot.id]
+        if len(depot_routes) > depot.num_vehicles:
+            violations.append(f"**{depot.name}**: {len(depot_routes)} routes generated, but only {depot.num_vehicles} vehicles are available.")
+    
+    if violations:
+        st.error("⚠️ **Resource Constraint Violation (M_d)**")
+        for v in violations:
+            st.write(v)
 
     st.markdown("---")
     tab_map, tab_table, tab_cmp = st.tabs(["🗺️ Route map", "📋 Route details", "📊 Algorithm comparison"])
@@ -119,7 +133,7 @@ if "routes" in st.session_state and st.session_state.routes:
             return "background-color: #f8d7da"
 
         st.dataframe(df.style.map(color_util, subset=["Utilization (%)"]),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
 
         st.markdown("**Per-depot summary:**")
         summary = df.groupby("Depot").agg(
@@ -129,7 +143,7 @@ if "routes" in st.session_state and st.session_state.routes:
             Total_distance=("Distance (km)", "sum"),
             Total_cost=("Cost (€)", "sum")
         ).reset_index()
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, width='stretch', hide_index=True)
 
     with tab_cmp:
         if st.session_state.get("compare_mode"):
@@ -149,7 +163,7 @@ if "routes" in st.session_state and st.session_state.routes:
 
             st.dataframe(pd.DataFrame([summarize(routes_nn, "Nearest Neighbor"),
                                        summarize(routes_cw, "Clarke-Wright Savings")]),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
 
             nn_dist = sum(r.total_distance for r in routes_nn)
             cw_dist = sum(r.total_distance for r in routes_cw)

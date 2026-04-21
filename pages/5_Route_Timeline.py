@@ -7,12 +7,13 @@ import streamlit as st
 import pandas as pd
 import math
 from datetime import datetime, timedelta
+import plotly.express as px
 
 from utils.data_models import (
-    ROMANIAN_DEPOTS, ROMANIAN_CUSTOMERS, VEHICLE_FLEET,
+    DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET,
     EUROPALLET, haversine
 )
-from utils.mdvrp_algorithms import solve_mdvrp
+from utils.mdvrp_algorithms import solve_mdvrp, get_transport_stats
 
 st.title("🕐 Route Timeline & Delivery Schedule")
 st.markdown(
@@ -21,8 +22,8 @@ st.markdown(
 )
 
 # ── Session state ─────────────────────────────────────────────────────────────
-if "depots"        not in st.session_state: st.session_state.depots        = ROMANIAN_DEPOTS.copy()
-if "customers"     not in st.session_state: st.session_state.customers     = ROMANIAN_CUSTOMERS.copy()
+if "depots"        not in st.session_state: st.session_state.depots        = DEPOTS_BUCHAREST.copy()
+if "customers"     not in st.session_state: st.session_state.customers     = CUSTOMERS_BUCHAREST.copy()
 if "vehicle_types" not in st.session_state: st.session_state.vehicle_types = VEHICLE_FLEET.copy()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ with st.sidebar:
     ])
     apply_2opt = st.checkbox("Apply 2-opt improvement", value=True)
 
-    run_btn = st.button("▶ Generate schedule", type="primary", use_container_width=True)
+    run_btn = st.button("▶ Generate schedule", type="primary", width='stretch')
 
 # ── Helper: build timeline for one route ─────────────────────────────────────
 
@@ -69,14 +70,14 @@ def build_timeline(route, departure_dt: datetime,
     pallets_loaded = math.ceil(load_kg / (pallet_payload_kg + pallet.weight_kg))
 
     events.append({
-        "Stop #":          0,
+        "Stop #":          "0",
         "Location":        f"🏭 {route.depot.name}",
         "Address":         route.depot.address,
         "Event":           "Departure (loaded)",
         "Arrival":         "—",
         "Departure":       current_time.strftime("%H:%M"),
         "Leg dist (km)":   0.0,
-        "Cumulative km":   0.0,
+        "Cumulative km":   "0.0",
         "Load on board (kg)": int(load_kg),
         "Pallets on board":   pallets_loaded,
         "Delivered (kg)":  0,
@@ -99,14 +100,14 @@ def build_timeline(route, departure_dt: datetime,
         departure_time = arrival_time + timedelta(minutes=customer.service_time)
 
         events.append({
-            "Stop #":             idx + 1,
+            "Stop #":             str(idx + 1),
             "Location":           f"🏪 {customer.name}",
             "Address":            customer.address,
             "Event":              "Delivery",
             "Arrival":            arrival_time.strftime("%H:%M"),
             "Departure":          departure_time.strftime("%H:%M"),
             "Leg dist (km)":      round(leg_km, 2),
-            "Cumulative km":      round(cumulative_km, 2),
+            "Cumulative km":      str(round(cumulative_km, 2)),
             "Load on board (kg)": int(max(remaining_load, 0)),
             "Pallets on board":   pallets_remaining,
             "Delivered (kg)":     int(delivered_kg),
@@ -121,14 +122,14 @@ def build_timeline(route, departure_dt: datetime,
     return_arrival = current_time + timedelta(minutes=(return_km / speed_kmh) * 60)
 
     events.append({
-        "Stop #":             len(route.customers) + 1,
+        "Stop #":             str(len(route.customers) + 1),
         "Location":           f"🏭 {route.depot.name}",
         "Address":            route.depot.address,
         "Event":              "Return to depot",
         "Arrival":            return_arrival.strftime("%H:%M"),
         "Departure":          "—",
         "Leg dist (km)":      round(return_km, 2),
-        "Cumulative km":      round(cumulative_km, 2),
+        "Cumulative km":      str(round(cumulative_km, 2)),
         "Load on board (kg)": 0,
         "Pallets on board":   0,
         "Delivered (kg)":     0,
@@ -261,7 +262,8 @@ if run_btn:
     algo_key = "clarke_wright" if "Clarke" in algo else "nearest_neighbor"
     routes, _ = solve_mdvrp(
         st.session_state.depots, st.session_state.customers,
-        selected_vt, algo_key, apply_2opt
+        selected_vt, algo_key, apply_2opt, load_balance=True,
+        start_hour=departure_hour, speed_kmh=avg_speed
     )
     st.session_state.routes      = routes
     st.session_state.tl_vt       = selected_vt
@@ -287,71 +289,84 @@ departure_dt = datetime.now().replace(
     hour=departure_hour, minute=departure_min, second=0, microsecond=0
 )
 
-st.markdown(f"**Departure time:** {departure_dt.strftime('%H:%M')} &nbsp;|&nbsp; "
-            f"**Speed:** {avg_speed} km/h &nbsp;|&nbsp; "
-            f"**Reload time:** {reload_time} min &nbsp;|&nbsp; "
-            f"**Algorithm:** {st.session_state.get('tl_algo', algo)}")
-st.markdown("---")
+st.markdown(f"**Departure:** {departure_dt.strftime('%H:%M')} | **Speed:** {avg_speed} km/h | **Algorithm:** {st.session_state.get('tl_algo', algo)}")
 
-# Summary table first
+# ── Pre-calculate all data in one pass ────────────────────────────────────────
 summary_rows = []
-for i, r in enumerate(routes):
-    max_p = selected_vt.max_pallets(EUROPALLET, pallet_payload)
-    used_p = math.ceil((r.total_demand * 1000) / (pallet_payload + EUROPALLET.weight_kg))
+gantt_data = []
+route_events = {} # Cache for expanders
+base_date = datetime.now().date()
+max_p = selected_vt.max_pallets(EUROPALLET, pallet_payload)
+
+for i, route in enumerate(routes):
+    used_p = math.ceil((route.total_demand * 1000) / (pallet_payload + EUROPALLET.weight_kg))
+    
+    # 1. Build Timeline Events
+    if used_p > max_p:
+        evs = build_multi_trip_timeline(route, departure_dt, avg_speed, reload_time, pallet_payload, max_p)
+    else:
+        evs = build_timeline(route, departure_dt, avg_speed, reload_time, pallet_payload)
+    
+    route_events[i] = evs
+
+    # 2. Build Summary Data
     summary_rows.append({
-        "Route":             f"Route {i+1}",
-        "Depot":             r.depot.name,
-        "Vehicle":           r.vehicle_type.name,
-        "Customers":         len(r.customers),
-        "Total demand (t)":  r.total_demand,
-        "Pallets loaded":    used_p,
-        "Max pallets":       max_p,
-        "Pallet util (%)":   round(used_p / max_p * 100, 1) if max_p else 0,
-        "Distance (km)":     r.total_distance,
-        "Est. cost (€)":     r.total_cost,
+        "Route": f"Route {i+1}", "Depot": route.depot.name,
+        "Pallets": used_p, "Pallet util (%)": round(used_p / max_p * 100, 1) if max_p else 0,
+        "Distance (km)": route.total_distance, "Cost (€)": route.total_cost
     })
 
-st.subheader("Route summary")
-df_sum = pd.DataFrame(summary_rows)
+    # 3. Build Gantt Data
+    for j in range(len(evs) - 1):
+        start_str = evs[j]["Departure"] if evs[j]["Departure"] != "—" else evs[j]["Arrival"]
+        end_str = evs[j+1]["Arrival"]
+        if start_str != "—" and end_str != "—":
+            st_t = datetime.combine(base_date, datetime.strptime(start_str, "%H:%M").time())
+            en_t = datetime.combine(base_date, datetime.strptime(end_str, "%H:%M").time())
+            activity = "Transit (Driving)"
+            if "Delivery" in evs[j+1]["Event"]: activity = "Unloading (Service)"
+            if "RELOAD" in evs[j+1]["Event"] or "Trip" in evs[j]["Event"]: activity = "Loading/Wait (Depot)"
+            gantt_data.append({
+                "Vehicul": f"R{i+1} ({route.vehicle_type.name})",
+                "Start": st_t, "End": en_t, "Activity": activity, "Location": evs[j+1]["Location"]
+            })
 
+# ── Display Sumar ─────────────────────────────────────────────────────────────
+st.subheader("📋 Route Summary")
+df_sum = pd.DataFrame(summary_rows)
 def color_putil(val):
     if val >= 80: return "background-color: #d4edda"
     if val >= 50: return "background-color: #fff3cd"
     return "background-color: #f8d7da"
+st.dataframe(df_sum.style.map(color_putil, subset=["Pallet util (%)"]), width='stretch', hide_index=True)
 
-st.dataframe(
-    df_sum.style.map(color_putil, subset=["Pallet util (%)"]),
-    use_container_width=True, hide_index=True
-)
+st.markdown("#### 📈 Operating Parameters (Total Fleet)")
+t_stats = get_transport_stats(routes)
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1.metric("Traffic flow", f"{t_stats['traffic_flow']:.1f} km/day")
+kpi2.metric("Transport flow", f"{t_stats['transport_flow']:.1f} v-inc*km")
+kpi3.metric("Empty run %", f"{t_stats['empty_pct']:.1f} %")
+kpi4.metric("Daily performance", f"{t_stats['performance']:.1f} t*km/day")
 
+# ── Display Ciclograma (Gantt) ────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("Step-by-step delivery timeline")
+st.subheader("📊 Movement Cyclogram")
+if gantt_data:
+    fig_gantt = px.timeline(pd.DataFrame(gantt_data), x_start="Start", x_end="End", y="Vehicul", 
+                            color="Activity", hover_data=["Location"],
+                            color_discrete_map={"Transit (Driving)": "#3B8BD4", "Unloading (Service)": "#1D9E75", "Loading/Wait (Depot)": "#E94560"})
+    fig_gantt.update_layout(xaxis_title="Timeline", yaxis_title="", height=300 + (len(routes)*30))
+    st.plotly_chart(fig_gantt, use_container_width=True)
 
+# ── Display Details ───────────────────────────────────────────────────────────
+st.markdown("---")
+st.subheader("📝 Step-by-Step Details")
 for i, route in enumerate(routes):
-    max_p = selected_vt.max_pallets(EUROPALLET, pallet_payload)
-    with st.expander(
-        f"🚛 Route {i+1} — {route.depot.name} → "
-        f"{len(route.customers)} stops · {route.total_distance:.1f} km · "
-        f"{route.total_demand:.1f} t",
-        expanded=(i == 0)
-    ):
-        # Choose single-trip or multi-trip
-        used_p = math.ceil((route.total_demand * 1000) / (pallet_payload + EUROPALLET.weight_kg))
-
-        if used_p > max_p:
-            st.warning(
-                f"⚠️ This route requires **{used_p} pallets** but the vehicle holds **{max_p}**. "
-                f"Multiple trips with depot reload are needed."
-            )
-            events = build_multi_trip_timeline(
-                route, departure_dt, avg_speed, reload_time,
-                pallet_payload, max_p
-            )
-        else:
-            events = build_timeline(
-                route, departure_dt, avg_speed, reload_time, pallet_payload
-            )
-
+    with st.expander(f"🚛 Route {i+1} — {route.depot.name} | {route.total_distance:.1f} km", expanded=(i == 0)):
+        events = route_events[i]
+        if len(events) > len(route.customers) + 2: # Multi-trip detection
+            st.warning("⚠️ This route requires reloading at the depot (Multi-trip).")
+        
         df_tl = pd.DataFrame(events)
 
         def style_event(val):
@@ -367,7 +382,7 @@ for i, route in enumerate(routes):
 
         st.dataframe(
             df_tl.style.map(style_event, subset=["Event"]),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=min(38 * len(events) + 50, 520)
         )

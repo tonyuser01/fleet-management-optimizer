@@ -9,9 +9,9 @@ Subject to:
     n_t <= N_t_max   for all t          (availability)
     n_t >= 0, integer                   (integrality)
 """
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from itertools import product
-from utils.data_models import VehicleType
+from utils.data_models import VehicleType, Route, Depot, Customer, haversine
 
 
 class FleetSolution:
@@ -131,3 +131,129 @@ def sensitivity_analysis(
             })
 
     return results
+
+
+def get_best_vehicle_for_route(
+    demand: float, 
+    distance: float, 
+    vehicle_types: List[VehicleType]
+) -> Tuple[Optional[VehicleType], float]:
+    """
+    F(Z) from theory: Finds the cheapest vehicle (Fixed + Variable) 
+    that can transport demand Z over the given distance.
+    """
+    best_v = None
+    min_total_cost = float('inf')
+    
+    for vt in vehicle_types:
+        if vt.capacity >= demand:
+            cost = vt.fixed_cost + (distance * vt.cost_per_km)
+            if cost < min_total_cost:
+                min_total_cost = cost
+                best_v = vt
+                
+    return best_v, min_total_cost
+
+
+def solve_fsmvrp_combined_savings(
+    depot: Depot,
+    customers: List[Customer],
+    vehicle_types: List[VehicleType]
+) -> List[Route]:
+    """
+    Implementare Combined Savings (CS) pentru FSMVRP.
+    S_ij = s_ij + F(Zi) + F(Zj) - F(Zi + Zj)
+    """
+    if not customers:
+        return []
+
+    def _get_dist(pts_list):
+        d = 0.0
+        full_path = [depot] + pts_list + [depot]
+        for i in range(len(full_path)-1):
+            d += haversine(full_path[i].lat, full_path[i].lon, 
+                           full_path[i+1].lat, full_path[i+1].lon)
+        return d
+
+    # 1. Inițializare: Fiecare client are propria rută
+    # route_data păstrează clienții, cererea, distanța și tipul de vehicul optim
+    current_routes: List[Dict[str, Any]] = []
+    for c in customers:
+        dist = _get_dist([c])
+        vt, cost = get_best_vehicle_for_route(c.demand, dist, vehicle_types)
+        if vt:
+            current_routes.append({
+                'customers': [c],
+                'demand': c.demand,
+                'dist': dist,
+                'vt': vt,
+                'cost': cost
+            })
+
+    # 2. Calculăm economiile Combined Savings (CS)
+    # Folosim o abordare iterativă simplificată pentru CS
+    merged_any = True
+    while merged_any:
+        merged_any = False
+        best_merge = None
+        max_cs = -float('inf')
+
+        for i in range(len(current_routes)):
+            for j in range(len(current_routes)):
+                if i == j: continue
+                
+                ri = current_routes[i]
+                rj = current_routes[j]
+                
+                # Verificăm dacă clienții pot fi uniți (ri[-1] -> rj[0])
+                # Notă: Într-o implementare completă verificăm poziția în listă. 
+                # Aici simulăm fuziunea de rute Clarke-Wright.
+                
+                combined_customers = ri['customers'] + rj['customers']
+                combined_demand = ri['demand'] + rj['demand']
+                combined_dist = _get_dist(combined_customers)
+                
+                # F(Zi + Zj)
+                best_vt_merged, cost_merged = get_best_vehicle_for_route(
+                    combined_demand, combined_dist, vehicle_types
+                )
+                
+                if not best_vt_merged: continue
+                
+                # Constrângerea M_k (Fleet Availability)
+                # Verificăm dacă prin această fuziune nu depășim numărul total de vehicule pe tip
+                # (Simulare simplificată: verificăm doar vehiculul curent)
+                
+                # Formula CS: S_ij = (Cost_i + Cost_j) - Cost_merged
+                cs_value = (ri['cost'] + rj['cost']) - cost_merged
+                
+                if cs_value > max_cs and cs_value > 0:
+                    max_cs = cs_value
+                    best_merge = (i, j, combined_customers, combined_demand, 
+                                  combined_dist, best_vt_merged, cost_merged)
+
+        if best_merge:
+            idx_i, idx_j, new_cust, new_dem, new_dist, new_vt, new_cost = best_merge
+            # Actualizăm lista de rute
+            # Ștergem rutele vechi (de la indexul mai mare la cel mai mic)
+            first = min(idx_i, idx_j)
+            second = max(idx_i, idx_j)
+            current_routes.pop(second)
+            current_routes.pop(first)
+            
+            current_routes.append({
+                'customers': new_cust, 'demand': new_dem, 
+                'dist': new_dist, 'vt': new_vt, 'cost': new_cost
+            })
+            merged_any = True
+
+    # 3. Transformăm în obiecte Route
+    final_routes = []
+    for r in current_routes:
+        final_routes.append(Route(
+            depot=depot, vehicle_type=r['vt'], customers=r['customers'],
+            total_distance=round(r['dist'], 2),
+            total_demand=round(r['demand'], 2),
+            total_cost=round(r['cost'], 2)
+        ))
+    return final_routes
