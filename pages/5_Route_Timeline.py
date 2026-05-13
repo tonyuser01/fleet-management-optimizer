@@ -327,7 +327,7 @@ for i, route in enumerate(routes):
             if "Delivery" in evs[j+1]["Event"]: activity = "Unloading (Service)"
             if "RELOAD" in evs[j+1]["Event"] or "Trip" in evs[j]["Event"]: activity = "Loading/Wait (Depot)"
             gantt_data.append({
-                "Vehicul": f"R{i+1} ({route.vehicle_type.name})",
+                "Vehicle": f"R{i+1} ({route.vehicle_type.name})",
                 "Start": st_t, "End": en_t, "Activity": activity, "Location": evs[j+1]["Location"]
             })
 
@@ -352,7 +352,7 @@ kpi4.metric("Daily performance", f"{t_stats['performance']:.1f} t*km/day")
 st.markdown("---")
 st.subheader("📊 Movement Cyclogram")
 if gantt_data:
-    fig_gantt = px.timeline(pd.DataFrame(gantt_data), x_start="Start", x_end="End", y="Vehicul", 
+    fig_gantt = px.timeline(pd.DataFrame(gantt_data), x_start="Start", x_end="End", y="Vehicle", 
                             color="Activity", hover_data=["Location"],
                             color_discrete_map={"Transit (Driving)": "#3B8BD4", "Unloading (Service)": "#1D9E75", "Loading/Wait (Depot)": "#E94560"})
     fig_gantt.update_layout(xaxis_title="Timeline", yaxis_title="", height=300 + (len(routes)*30))

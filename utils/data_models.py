@@ -52,11 +52,15 @@ class Customer:
     lat: float
     lon: float
     address: str
-    demand: float
+    demand_ambient: float = 0.0
+    demand_refrigerated: float = 0.0
+    needs_refrigeration: bool = False
     time_window_open: int  = 6
     time_window_close: int = 18
     service_time: int = 30
 
+    @property
+    def demand(self): return self.demand_ambient + self.demand_refrigerated
     @property
     def demand_kg(self): return self.demand * 1000
 
@@ -73,6 +77,7 @@ class VehicleType:
     fixed_cost: float
     cost_per_km: float
     max_available: int
+    is_refrigerated: bool = False
     speed_kmh: float  = 70.0
     cargo_length_m: float = 7.2
     cargo_width_m:  float = 2.4
@@ -134,32 +139,32 @@ DEPOTS_BUCHAREST = [
           capacity=600, num_vehicles=5, daily_stock_tonnes=65.0),
 
     Depot(2, "Depot Ilfov-Otopeni",
-          lat=44.5800, lon=26.0500,
-          address="Strada Aeroportului 10, Otopeni, Ilfov",
-          capacity=500, num_vehicles=4, daily_stock_tonnes=50.0),
+          lat=44.5200, lon=25.9500,
+          address="Calea București, Otopeni/Chiajna Area",
+          capacity=500, num_vehicles=3, daily_stock_tonnes=50.0),
 ]
 
 CUSTOMERS_BUCHAREST = [
-    Customer(0,  "Store District 1",     44.4600, 26.0700, "Calea Victoriei 12, Sector 1",            3.5),
-    Customer(1,  "Store District 2",     44.4500, 26.1400, "Bulevardul Ferdinand 80, Sector 2",        2.0),
-    Customer(2,  "Store District 3",     44.4300, 26.1600, "Șoseaua Mihai Bravu 220, Sector 3",        4.5),
-    Customer(3,  "Store District 4",     44.4100, 26.1100, "Bulevardul Metalurgiei 67, Sector 4",      3.0),
-    Customer(4,  "Store District 5",     44.3900, 26.0700, "Calea 13 Septembrie 90, Sector 5",         2.5),
-    Customer(5,  "Store District 6",     44.4400, 26.0300, "Bulevardul Iuliu Maniu 541, Sector 6",     3.0),
-    Customer(6,  "Store Pipera",         44.5000, 26.1000, "Strada Pipera 46, Voluntari, Ilfov",       5.0),
-    Customer(7,  "Store Baneasa",        44.5200, 26.0800, "Șoseaua București-Ploiești 42, Sector 1",  2.0),
-    Customer(8,  "Store Drumul Taberei", 44.4200, 25.9900, "Bulevardul Timișoara 26, Sector 6",        4.0),
-    Customer(9,  "Store Militari",       44.4300, 25.9600, "Calea Crângași 10, Sector 6",              3.5),
-    Customer(10, "Store Colentina",      44.4700, 26.1700, "Șoseaua Colentina 426, Sector 2",          2.5),
-    Customer(11, "Store Pantelimon",     44.4300, 26.2100, "Șoseaua Pantelimon 302, Sector 2",         3.0),
-    Customer(12, "Store Titan",          44.4200, 26.1800, "Bulevardul 1 Decembrie 1918 12, Sector 3", 4.0),
-    Customer(13, "Store Rahova",         44.3900, 26.0600, "Calea Rahovei 198, Sector 5",              2.0),
-    Customer(14, "Store Ferentari",      44.3800, 26.0900, "Bulevardul Ferentari 62, Sector 5",        2.5),
-    Customer(15, "Store Giulesti",       44.4600, 25.9900, "Calea Giulești 285, Sector 6",             3.5),
-    Customer(16, "Store Floreasca",      44.4800, 26.1000, "Calea Floreasca 167, Sector 1",            4.5),
-    Customer(17, "Store Dorobanti",      44.4700, 26.0900, "Bulevardul Dorobanților 5, Sector 1",      3.0),
-    Customer(18, "Store Obor",           44.4500, 26.1200, "Piața Obor 1, Sector 2",                   5.0),
-    Customer(19, "Store Berceni",        44.3700, 26.1200, "Șoseaua Berceni 187, Sector 4",            2.5),
+    Customer(0,  "Store District 1",     44.4600, 26.0700, "Calea Victoriei 12, Sector 1",            demand_ambient=3.5),
+    Customer(1,  "Store District 2",     44.4500, 26.1400, "Bulevardul Ferdinand 80, Sector 2",        demand_ambient=2.0),
+    Customer(2,  "Store District 3",     44.4300, 26.1600, "Șoseaua Mihai Bravu 220, Sector 3",        demand_ambient=4.5),
+    Customer(3,  "Store District 4",     44.4100, 26.1100, "Bulevardul Metalurgiei 67, Sector 4",      demand_ambient=3.0),
+    Customer(4,  "Store District 5",     44.3900, 26.0700, "Calea 13 Septembrie 90, Sector 5",         demand_ambient=2.5),
+    Customer(5,  "Store District 6",     44.4400, 26.0300, "Bulevardul Iuliu Maniu 541, Sector 6",     demand_ambient=3.0),
+    Customer(6,  "Store Pipera",         44.5000, 26.1000, "Strada Pipera 46, Voluntari, Ilfov",       demand_ambient=4.0),
+    Customer(7,  "Store Baneasa",        44.5200, 26.0800, "Șoseaua București-Ploiești 42, Sector 1",  demand_ambient=2.0),
+    Customer(8,  "Store Drumul Taberei", 44.4200, 25.9900, "Bulevardul Timișoara 26, Sector 6",        demand_ambient=4.0),
+    Customer(9,  "Store Militari",       44.4300, 25.9600, "Calea Crângași 10, Sector 6",              demand_ambient=3.5),
+    Customer(10, "Store Colentina",      44.4700, 26.1700, "Șoseaua Colentina 426, Sector 2",          demand_ambient=2.5),
+    Customer(11, "Store Pantelimon",     44.4300, 26.2100, "Șoseaua Pantelimon 302, Sector 2",         demand_ambient=3.0),
+    Customer(12, "Store Titan",          44.4200, 26.1800, "Bulevardul 1 Decembrie 1918 12, Sector 3", demand_ambient=4.0),
+    Customer(13, "Store Rahova",         44.3900, 26.0600, "Calea Rahovei 198, Sector 5",              demand_ambient=2.0),
+    Customer(14, "Store Ferentari",      44.3800, 26.0900, "Bulevardul Ferentari 62, Sector 5",        demand_ambient=2.5),
+    Customer(15, "Store Giulesti",       44.4600, 25.9900, "Calea Giulești 285, Sector 6",             demand_ambient=3.5),
+    Customer(16, "Store Floreasca",      44.4800, 26.1000, "Calea Floreasca 167, Sector 1",            demand_ambient=3.8, demand_refrigerated=0.7),
+    Customer(17, "Store Dorobanti",      44.4700, 26.0900, "Bulevardul Dorobanților 5, Sector 1",      demand_ambient=3.0),
+    Customer(18, "Store Obor",           44.4500, 26.1200, "Piața Obor 1, Sector 2",                   demand_ambient=3.5, demand_refrigerated=1.5),
+    Customer(19, "Store Berceni",        44.3700, 26.1200, "Șoseaua Berceni 187, Sector 4",            demand_ambient=2.5),
 ]
 
 VEHICLE_FLEET = [
@@ -208,7 +213,7 @@ VEHICLE_FLEET = [
 
     VehicleType(3, "Refrigerated truck (5t)",capacity_tonnes=5.0,  fixed_cost=160,
                 cost_per_km=0.50, max_available=2,
-                cargo_length_m=5.5, cargo_width_m=2.2, cargo_height_m=2.4,
+                cargo_length_m=5.5, cargo_width_m=2.2, cargo_height_m=2.4, is_refrigerated=True,
                 description="Designed for perishable goods requiring temperature control.",
                 tech_specs={
                     "Model": "Scania P250 XT",

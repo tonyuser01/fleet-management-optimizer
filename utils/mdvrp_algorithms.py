@@ -5,7 +5,7 @@ MDVRP Algorithms:
   3. Clarke-Wright Savings      — merge-based construction
   4. 2-opt local search         — route improvement
 """
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Union
 from datetime import datetime, timedelta
 from utils.data_models import Depot, Customer, Route, VehicleType, haversine
 
@@ -51,7 +51,10 @@ def nearest_neighbor_routes(
         cur_lat, cur_lon = depot.lat, depot.lon
 
         while True:
-            feasible = [c for c in unvisited if load + c.demand <= vehicle_capacity]
+            feasible = [
+                c for c in unvisited 
+                if load + c.demand <= vehicle_capacity and (not c.needs_refrigeration or vehicle_type.is_refrigerated)
+            ]
             if not feasible:
                 break
 
@@ -111,8 +114,12 @@ def clarke_wright_routes(
         return []
 
     # Step 1 — initialise one route per customer
-    route_of: Dict[int, List[Customer]] = {c.id: [c] for c in customers}
-    route_list: List[List[Customer]] = [route_of[c.id] for c in customers]
+    # Skip customers that require refrigeration if the vehicle is not refrigerated
+    route_of: Dict[int, List[Customer]] = {
+        c.id: [c] for c in customers if not c.needs_refrigeration or vehicle_type.is_refrigerated
+    }
+    # Track current load of each route object to avoid re-summing
+    route_loads: Dict[int, float] = {id(r): sum(c.demand for c in r) for r in route_of.values()}
 
     # Step 2 — compute all savings
     savings: List[Tuple[float, Customer, Customer]] = []
@@ -127,18 +134,15 @@ def clarke_wright_routes(
     # Step 3 — sort savings descending
     savings.sort(key=lambda x: -x[0])
 
-    # Step 4 — merge routes
-    def get_load(r):
-        return sum(c.demand for c in r)
-
+    # Step 4 — merge routes iteratively
     for s_val, ci, cj in savings:
         ri = route_of.get(ci.id)
         rj = route_of.get(cj.id)
         if ri is None or rj is None or ri is rj:
             continue
             
-        # Capacity check (C3)
-        if get_load(ri) + get_load(rj) > vehicle_capacity:
+        # Capacity check (C3) using cached loads
+        if route_loads[id(ri)] + route_loads[id(rj)] > vehicle_capacity:
             continue
             
         if ri[-1] is ci and rj[0] is cj:
@@ -151,15 +155,22 @@ def clarke_wright_routes(
             if not _is_time_feasible(depot, merged, speed_kmh, start_hour):
                 continue
                 
+            # Update load cache and references
+            new_load = route_loads[id(ri)] + route_loads[id(rj)]
+            route_loads[id(merged)] = new_load
+            
             for c in merged:
                 route_of[c.id] = merged
-            route_list = [r for r in route_list if r is not ri and r is not rj]
-            route_list.append(merged)
 
-    # Build Route objects
+    # Build unique Route objects from the mapping
     routes: List[Route] = []
-    for r in route_list:
-        load = get_load(r)
+    seen_route_ids = set()
+    for c_id in route_of:
+        r = route_of[c_id]
+        if id(r) in seen_route_ids: continue
+        seen_route_ids.add(id(r))
+        
+        load = route_loads[id(r)]
         total_dist = _route_dist(depot, r)
         total_cost = vehicle_type.fixed_cost + total_dist * vehicle_type.cost_per_km
         routes.append(Route(
@@ -197,8 +208,8 @@ def two_opt_improve(route: Route) -> Route:
         # Iterate over all pairs of arcs (i, i+1) and (j, j+1)
         for i in range(n):
             for j in range(i + 2, n + 1):
-                # Arco 1: (nodes[i], nodes[i+1])
-                # Arco 2: (nodes[j], nodes[j+1])
+                # Arc 1: (nodes[i], nodes[i+1])
+                # Arc 2: (nodes[j], nodes[j+1])
                 
                 d_curr = haversine(nodes[i].lat, nodes[i].lon, nodes[i+1].lat, nodes[i+1].lon) + \
                          haversine(nodes[j].lat, nodes[j].lon, nodes[j+1].lat, nodes[j+1].lon)
@@ -229,10 +240,10 @@ def two_opt_improve(route: Route) -> Route:
 def get_transport_stats(routes: List[Route]) -> Dict[str, float]:
     """
     Calculates theoretical transport metrics per scenario.
-    - Traffic Flow (Ftrafic) [km/zi]
-    - Transport Flow (Ftransport) [veh-inc*km/zi]
+    - Traffic Flow (Ftrafic) [km/day]
+    - Transport Flow (Ftransport) [veh-inc*km/day]
     - Empty Run Percentage (Pgol) [%]
-    - Daily Performance (Pzilnica) [tone*km/zi]
+    - Daily Performance (Pperformance) [tonne*km/day]
     """
     traffic_flow = 0.0
     return_dist = 0.0
@@ -293,8 +304,9 @@ def _is_time_feasible(depot: Depot, customers: List[Customer], speed_kmh: float,
     # Returning to depot
     dist_back = haversine(cur_lat, cur_lon, depot.lat, depot.lon)
     arrival_depot = current_time + (dist_back / speed_kmh) * 60.0
-    
-    return True
+
+    # Optional: Check if return to depot is before a global shift end (e.g., 22:00)
+    return arrival_depot <= 22 * 60 
 
 
 def _route_dist(depot: Depot, customers: List[Customer]) -> float:
@@ -309,10 +321,45 @@ def _route_dist(depot: Depot, customers: List[Customer]) -> float:
 
 # ── Full MDVRP Solver ─────────────────────────────────────────────────────────
 
+def _preprocess_split_deliveries(customers: List[Customer], vehicle_capacity: float) -> List[Customer]:
+    """
+    Helper to handle Split Delivery VRP (SDVRP).
+    Handles Mixed Demands: Splits orders into Refrigerated and Ambient tasks.
+    Then splits tasks into multiple virtual customers if they exceed vehicle capacity.
+    """
+    processed_customers = []
+    for c in customers:
+        # Sub-function to split a specific demand type
+        def split_task(amt: float, is_ref: bool, suffix: str):
+            if amt <= 0: return
+            remaining = amt
+            part = 1
+            while remaining > 0:
+                take = min(remaining, vehicle_capacity)
+                processed_customers.append(Customer(
+                    id=c.id * 1000 + (100 if is_ref else 200) + part,
+                    name=f"{c.name} ({suffix} P{part})",
+                    lat=c.lat, lon=c.lon, address=c.address,
+                    demand_ambient=0.0 if is_ref else take,
+                    demand_refrigerated=take if is_ref else 0.0,
+                    needs_refrigeration=is_ref,
+                    time_window_open=c.time_window_open,
+                    time_window_close=c.time_window_close,
+                    service_time=c.service_time // 2 if part > 1 else c.service_time
+                ))
+                remaining -= take
+                part += 1
+
+        # Handle both components of the order
+        split_task(c.demand_refrigerated, True, "❄️")
+        split_task(c.demand_ambient, False, "📦")
+
+    return processed_customers
+
 def solve_mdvrp(
     depots: List[Depot],
     customers: List[Customer],
-    vehicle_type: VehicleType,
+    vehicle_type: Union[VehicleType, List[VehicleType]],
     algorithm: str = "clarke_wright",
     apply_2opt: bool = True,
     max_distance: float = float('inf'),
@@ -329,32 +376,26 @@ def solve_mdvrp(
 
     Returns (all_routes, depot_assignment)
     """
-    # 0. Split Deliveries Logic (SDVRP)
-    # If a customer demand > vehicle capacity, split the customer into multiple "virtual customers"
-    processed_customers = []
-    for c in customers:
-        if c.demand > vehicle_type.capacity:
-            remaining = c.demand
-            part = 1
-            while remaining > 0:
-                take = min(remaining, vehicle_type.capacity)
-                processed_customers.append(Customer(
-                    id=c.id * 1000 + part, 
-                    name=f"{c.name} (P{part})",
-                    lat=c.lat, lon=c.lon, address=c.address,
-                    demand=take, time_window_open=c.time_window_open,
-                    time_window_close=c.time_window_close, service_time=c.service_time // 2 if part > 1 else c.service_time
-                ))
-                remaining -= take
-                part += 1
-        else:
-            processed_customers.append(c)
+    # Determine capacity for splitting logic
+    if isinstance(vehicle_type, list):
+        max_cap = max(vt.capacity for vt in vehicle_type)
+    else:
+        max_cap = vehicle_type.capacity
 
+    # 0. Split Deliveries Logic (SDVRP)
+    processed_customers = _preprocess_split_deliveries(customers, max_cap)
+    
     assignment = assign_customers_to_depots(depots, processed_customers)
 
     def solve_for_depot(d, custs):
         if not custs:
             return []
+        
+        if isinstance(vehicle_type, list):
+            # Use Combined Savings for mixed fleet (FSMVRP logic)
+            from utils.fsmvrp_optimizer import solve_fsmvrp_combined_savings
+            return solve_fsmvrp_combined_savings(d, custs, vehicle_type)
+
         if algorithm == "nearest_neighbor":
             routes = nearest_neighbor_routes(d, custs, vehicle_type.capacity, vehicle_type, max_distance, start_hour, speed_kmh)
         else:

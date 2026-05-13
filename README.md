@@ -189,7 +189,7 @@ This application was developed as part of the **dissertation research**:
 > *"Scientific Research: Fleet Management for a General Merchandise Distributor"*  
 > MSc Transport Management  
 > Faculty of Transport — Politehnica University of Bucharest  
-> Academic year 2024-2025
+> Academic year 2024-2026
 
 ### Thesis chapters covered
 
@@ -201,7 +201,9 @@ This application was developed as part of the **dissertation research**:
 
 ## License
 
-MIT License — free for academic and educational use.
+Free for academic and educational use. No License granted.
+
+
 
 ---
 

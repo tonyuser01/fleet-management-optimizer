@@ -16,6 +16,49 @@ from streamlit.components.v1 import html as st_html
 st.title("🚛 FSMVRP — Fleet Size and Mix Optimizer")
 st.markdown("Determine the optimal fleet composition to minimize total distribution cost.")
 
+with st.expander("📖 Theoretical Framework: Fleet Size and Mix VRP"):
+    st.markdown(r"""
+    ### 1. Introduction
+    The Fleet Size and Mix Vehicle Routing Problem (FSMVRP) represents a decision layer in distribution network optimization. Unlike the classical VRP which assumes a homogeneous fleet, the FSMVRP acknowledges that most logistics providers operate heterogeneous fleets comprising vehicles of different capacities, costs, and operational characteristics.
+    
+    The FSMVRP seeks to determine not only the optimal routes for serving customers but also the optimal composition of the fleet: how many vehicles of each type should be deployed to minimize total system cost. Determining the optimal fleet composition is a long-term decision, as distribution costs driven by fuel and asset maintenance constitute a significant portion of a firm's total expenditure.
+
+    ### 2. Mathematical Formulation
+    The objective is to minimize total costs, consisting of fixed acquisition/leasing costs and vehicle-dependent operational costs:
+    $$\min Z = \sum_{k=1}^{T}{F_k\left(\sum_{j=1}^{n}x_{0jk}\right)}+\sum_{k=1}^{T}\sum_{i=0}^{n}\sum_{j=0}^{n}c_{ijk}\, x_{ijk}$$
+
+    **Cost Structure:**
+    - **Fixed costs ($F_k$):** Sum of acquisition costs for each vehicle type $k$ that leaves the depot (node 0).
+    - **Variable costs ($c_{ijk}$):** Operational cost of traversing arc $(i,j)$ with vehicle type $k$, proportional to distance and consumption rates.
+
+    **Constraints:**
+    - **Customer Service:** Each customer $j$ must be visited exactly once:
+      $$\sum_{k=1}^{T}\sum_{i=0}^{n}x_{ijk}=1, \quad \forall j=1,\ldots,n$$
+    - **Flow Conservation:** Vehicle $k$ entering location $p$ must also depart:
+      $$\sum_{i=0}^{n}x_{ipk}-\sum_{j=0}^{n}x_{pjk}=0, \quad \forall k=1,\ldots,T; \ \forall p=1,\ldots,n$$
+    - **Vehicle Capacity:** Total demand served on a route must not exceed vehicle capacity $a_k$:
+      $$r_j \le \sum_{k=1}^{T}\sum_{i=0}^{n}a_k\, x_{ijk}, \quad \forall j=1,\ldots,n$$
+    - **Subtour Elimination:** Ensures all routes are linked to the central depot using commodity flow variables:
+      $$r_j-r_i \geq (d_j+a_T)\sum_{k=1}^{T}x_{ijk}-a_T, \quad \forall i=0,\ldots,n; \ \forall j=1,\ldots,n$$
+    - **Fleet Availability:**
+      $$x_{ij}^k \in \{0, 1\}, \quad \sum_{j=1}^{n}x_{0jk} \le m_k, \quad \forall k \in K$$
+
+    ### 3. Solution Methodology: Combined Savings (CS)
+    Traditional routing algorithms, such as the Clarke and Wright (CW) savings technique, are often deficient for the FSMVRP because they focus solely on distance. Standard CW tends to merge routes until the capacity of the largest vehicle is reached, even if it is not cost-effective.
+
+    To solve this, the **Combined Savings (CS)** approach integrates vehicle costs into the logic:
+    $$S_{ij}=s_{ij}+F(Z_i)+F(Z_j)-F(Z_i+Z_j)$$
+    Where $F(Z)$ is the cost of the smallest vehicle type capable of serving demand $Z$.
+
+    ### 4. Optimization Objectives Explained
+    - **Minimize Total Cost**: The model searches for the fleet composition that achieves the lowest aggregate cost (Fixed Costs + Variable Costs). This is the standard "profit-maximization" strategy.
+    - **Minimize Vehicles**: Focuses on asset reduction. It aims for the absolute lowest vehicle count required to cover demand. This is vital when driver availability or physical terminal space is the primary constraint.
+    - **Balanced Utilization (Mixed Fleet)**: Targets an ideal load factor of approximately 85%. This strategy provides an operational safety buffer for demand fluctuations while avoiding the inefficiencies of under-utilization.
+    
+    ---
+    *Note: Research also indicates that energy consumption in these models is highly load-dependent.*
+    """)
+
 if "vehicle_types" not in st.session_state:
     st.session_state.vehicle_types = VEHICLE_FLEET.copy()
 
@@ -24,13 +67,16 @@ with st.sidebar:
     st.header("⚙️ FSMVRP Parameters")
     total_demand = st.slider("Total demand to deliver (t)", 10.0, 120.0, 45.0, 2.5)
     total_km     = st.slider("Estimated total distance (km)", 50, 800, 320, 10)
-    objective = st.selectbox("Optimization objective", [
-        "min_cost", "min_vehicles", "balanced"
-    ], format_func=lambda x: {
-        "min_cost":     "Minimize total cost",
-        "min_vehicles": "Minimize number of vehicles",
-        "balanced":     "Balanced fleet utilization"
-    }[x])
+    objective = st.selectbox(
+        "Optimization objective", 
+        ["min_cost", "min_vehicles", "balanced"], 
+        format_func=lambda x: {
+            "min_cost":     "Minimize total cost",
+            "min_vehicles": "Minimize number of vehicles",
+            "balanced":     "Balanced fleet utilization"
+        }[x],
+        help="Choose the strategic priority for fleet composition. 'Balanced' targets ~85% average utilization."
+    )
     max_veh  = st.slider("Maximum vehicles allowed", 3, 20, 12)
     run_btn  = st.button("▶ Optimize fleet", type="primary", width='stretch')
 
@@ -41,6 +87,13 @@ if run_btn:
             objective=objective, max_vehicles=max_veh
         )
         sens = sensitivity_analysis(st.session_state.vehicle_types, total_demand, total_km)
+
+        # Generate operational routes using Combined Savings if data is available
+        if "customers" in st.session_state and st.session_state.customers:
+            st.session_state.cs_routes = solve_fsmvrp_combined_savings(
+                st.session_state.depots, st.session_state.customers, st.session_state.vehicle_types
+            )
+
     st.session_state.fsm_best  = best
     st.session_state.fsm_top20 = top20
     st.session_state.fsm_sens  = sens
@@ -67,7 +120,7 @@ if best is not None:
         "📋 Executive Summary",
         "🚛 Optimal configuration",
         "📊 Solution comparison",
-        " Sensitivity analysis",
+        "📈 Sensitivity analysis",
         "🔢 Mathematical model",
         "🗺️ CS Routing Results"
     ])
@@ -103,7 +156,24 @@ if best is not None:
             st.write(f"**Fixed Cost Ratio:** {fixed_ratio:.1f}%")
             
         st.markdown("---")
-        st.markdown("#### 📑 Strategic Recommendation")
+        st.markdown("#### 📦 Fleet Inventory Status")
+        st.caption("Usage vs. Availability defined in Map & Data configuration.")
+        
+        inventory_data = []
+        for vt in st.session_state.vehicle_types:
+            used = best.allocation.get(vt.id, 0)
+            inventory_data.append({
+                "Vehicle Type": vt.name,
+                "Used": used,
+                "Available": vt.max_available,
+                "Remaining": vt.max_available - used,
+                "Utilization": f"{(used/vt.max_available*100):.0f}%" if vt.max_available > 0 else "0%"
+            })
+        
+        st.table(pd.DataFrame(inventory_data))
+
+        st.markdown("---")
+        st.markdown("#### Strategic Recommendation")
         
         if best.utilization > 90:
             st.warning("⚠️ **High Utilization:** Your fleet is operating near maximum capacity. Any increase in demand will require additional vehicles or outsourced transport.")
@@ -149,7 +219,7 @@ if best is not None:
             marker_color=["#E94560","#3B8BD4","#1D9E75","#BA7517"],
             text=list(alloc.values()), textposition="outside"
         )])
-        fig_bar.update_layout(title="Vehicles used by type", yaxis_title="Count",
+        fig_bar.update_layout(title="Vehicles Used by Type", yaxis_title="Count",
                                height=260, margin=dict(t=40, b=20, l=20, r=20))
         st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -239,13 +309,13 @@ $Q_t$ = vehicle capacity, $c_{ij}$ = arc cost, $x_{ijk}$ = binary routing variab
                 {"Parameter": "Optimal vehicles used",  "Value": best.total_vehicles},
             ]), width='stretch', hide_index=True)
 
-    with t5: # Tab-ul nou
+    with t5: # New Tab
         st.subheader("Combined Savings Operational Routes")
         if cs_routes:
             st.write(f"The algorithm generated **{len(cs_routes)} routes** using an optimal vehicle mix.")
             
             # Vizualizare hartă
-            m_cs = build_map(DEPOTS_BUCHAREST[:1], CUSTOMERS_BUCHAREST, cs_routes)
+            m_cs = build_map(DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, cs_routes)
             st_html(map_to_html(m_cs), height=400)
             
             # Tabel detalii

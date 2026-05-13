@@ -33,14 +33,27 @@ st.markdown("Depot and customer directory, europallet specifications, vehicle fl
 
 # ── Session state ─────────────────────────────────────────────────────────────
 if "depots"        not in st.session_state: st.session_state.depots        = DEPOTS_BUCHAREST.copy()
-if "customers"     not in st.session_state: st.session_state.customers     = CUSTOMERS_BUCHAREST.copy()
+if "all_customers" not in st.session_state: st.session_state.all_customers = CUSTOMERS_BUCHAREST.copy()
 if "vehicle_types" not in st.session_state: st.session_state.vehicle_types = VEHICLE_FLEET.copy()
+
+# ── Callbacks ────────────────────────────────────────────────────────────────
+def on_store_edit():
+    """Callback to sync data_editor changes back to Customer objects before the script reruns."""
+    state = st.session_state.stores_editor
+    # Sync edited rows back to the session_state objects
+    for idx_str, changes in state.get("edited_rows", {}).items():
+        idx = int(idx_str)
+        if "customers" in st.session_state and idx < len(st.session_state.customers):
+            c = st.session_state.customers[idx]
+            if "Ambient (kg)" in changes:    c.demand_ambient = changes["Ambient (kg)"] / 1000.0
+            if "Fridge (kg)" in changes:     c.demand_refrigerated = changes["Fridge (kg)"] / 1000.0
+            if "Needs Fridge" in changes:    c.needs_refrigeration = changes["Needs Fridge"]
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Configuration")
     max_demand = st.slider("Max demand per customer (t)", 1.0, 10.0, 8.0, 0.5)
-    st.session_state.customers = [c for c in CUSTOMERS_BUCHAREST if c.demand <= max_demand]
+    st.session_state.customers = [c for c in st.session_state.all_customers if c.demand <= max_demand]
     st.info(f"Active customers: **{len(st.session_state.customers)}**")
 
     st.markdown("---")
@@ -68,19 +81,23 @@ with tabs[0]:
     st_html(map_to_html(m), height=520, scrolling=False)
 
     total_demand = sum(c.demand for c in st.session_state.customers)
+    total_ambient = sum(c.demand_ambient for c in st.session_state.customers)
+    total_fridge  = sum(c.demand_refrigerated for c in st.session_state.customers)
     total_stock  = sum(d.daily_stock_tonnes for d in st.session_state.depots)
-    c1, c2, c3, c4 = st.columns(4)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Depots",              len(st.session_state.depots))
     c2.metric("Active customers",    len(st.session_state.customers))
-    c3.metric("Total daily demand",  f"{total_demand:.1f} t")
-    c4.metric("Total depot stock",   f"{total_stock:.1f} t/day")
+    c3.metric("Total Demand",        f"{total_demand:.1f} t")
+    c4.metric("📦 Ambient",          f"{total_ambient:.1f} t")
+    c5.metric("❄️ Refrigerated",      f"{total_fridge:.1f} t")
 
 # ─── TAB 2: DEPOTS ────────────────────────────────────────────────────────────
 with tabs[1]:
     st.subheader("Depot directory")
     st.markdown("Each depot receives daily stock from the central warehouse and dispatches vehicles to serve assigned customers.")
 
-    depot_df = pd.DataFrame([{
+    depot_data = [{
         "ID":                    d.id,
         "Name":                  d.name,
         "Address":               d.address,
@@ -89,8 +106,24 @@ with tabs[1]:
         "Vehicles available":    d.num_vehicles,
         "Daily capacity (units)":d.capacity,
         "Daily stock (t)":       d.daily_stock_tonnes,
-    } for d in st.session_state.depots])
-    st.dataframe(depot_df, width='stretch', hide_index=True)
+    } for d in st.session_state.depots]
+    
+    edited_depots = st.data_editor(
+        depot_data, 
+        width='stretch', 
+        hide_index=True,
+        column_config={
+            "ID": st.column_config.NumberColumn(disabled=True),
+            "Name": st.column_config.TextColumn(disabled=True),
+            "Vehicles available": st.column_config.NumberColumn(min_value=1, max_value=50, step=1),
+            "Daily capacity (units)": st.column_config.NumberColumn(min_value=100)
+        }
+    )
+    # Sync changes back to session state objects
+    for i, row in enumerate(edited_depots):
+        st.session_state.depots[i].num_vehicles = row["Vehicles available"]
+        st.session_state.depots[i].capacity = row["Daily capacity (units)"]
+        st.session_state.depots[i].daily_stock_tonnes = row["Daily stock (t)"]
 
     st.markdown("---")
     st.subheader("Daily incoming stock per depot")
@@ -105,20 +138,35 @@ with tabs[2]:
     st.subheader("Store directory")
     st.markdown("All customer locations with addresses, daily demand, and time windows.")
 
-    store_df = pd.DataFrame([{
-        "ID":              c.id,
-        "Store name":      c.name,
-        "Address":         c.address,
-        "Latitude":        round(c.lat, 4),
-        "Longitude":       round(c.lon, 4),
-        "Daily demand (t)":c.demand,
-        "Demand (kg)":     int(c.demand * 1000),
-        "Pallets needed":  c.pallets_needed(EUROPALLET),
-        "Time window":     f"{c.time_window_open}:00 – {c.time_window_close}:00",
-        "Service time (min)": c.service_time,
-    } for c in st.session_state.customers])
-    st.dataframe(store_df, width='stretch', hide_index=True)
+    store_data = [{
+        "ID":                 c.id,
+        "Store name":         c.name,
+        "Ambient (kg)":       int(c.demand_ambient * 1000),
+        "Fridge (kg)":        int(c.demand_refrigerated * 1000),
+        "Needs Fridge":       c.needs_refrigeration,
+        "Total Demand (t)":   round(c.demand, 2),
+        "Pallets needed":     c.pallets_needed(EUROPALLET, pallet_payload),
+        "Address":            c.address,
+    } for c in st.session_state.customers]
 
+    st.data_editor(
+        store_data, 
+        width='stretch', 
+        hide_index=True,
+        key="stores_editor",
+        on_change=on_store_edit,
+        column_config={
+            "ID": st.column_config.NumberColumn(disabled=True),
+            "Store name": st.column_config.TextColumn(disabled=True),
+            "Ambient (kg)": st.column_config.NumberColumn(min_value=0, step=50),
+            "Fridge (kg)": st.column_config.NumberColumn(min_value=0, step=50),
+            "Needs Fridge": st.column_config.CheckboxColumn(),
+            "Total Demand (t)": st.column_config.NumberColumn(disabled=True),
+            "Pallets needed": st.column_config.NumberColumn(disabled=True),
+            "Address": st.column_config.TextColumn(disabled=True),
+        }
+    )
+    
     col1, col2 = st.columns(2)
     demands = [float(cast(Any, c.demand)) for c in st.session_state.customers]
     with col1:
@@ -169,23 +217,31 @@ with tabs[3]:
     st.markdown("---")
     st.subheader("Vehicle fleet — capacity and pallet loading")
 
-    fleet_rows = []
-    for vt in st.session_state.vehicle_types:
-        floor_pallets  = vt.max_pallets_by_floor(EUROPALLET)
-        weight_pallets = vt.max_pallets_by_weight(EUROPALLET, pallet_payload)
-        effective      = vt.max_pallets(EUROPALLET, pallet_payload)
-        fleet_rows.append({
-            "Vehicle type":          vt.name,
-            "Payload (t)":           vt.capacity_tonnes,
-            "Fixed cost (€/day)":    vt.fixed_cost,
-            "Cost per km (€)":       vt.cost_per_km,
-            "Cargo (L×W×H m)":       f"{vt.cargo_length_m}×{vt.cargo_width_m}×{vt.cargo_height_m}",
-            "Pallets by floor":      floor_pallets,
-            "Pallets by weight":     weight_pallets,
-            "Effective max pallets": effective,
-            "Max available":         vt.max_available,
-        })
-    st.dataframe(pd.DataFrame(fleet_rows), width='stretch', hide_index=True)
+    fleet_data = [{
+        "ID":                    vt.id,
+        "Vehicle type":          vt.name,
+        "Payload (t)":           vt.capacity_tonnes,
+        "Fixed cost (€/day)":    vt.fixed_cost,
+        "Cost per km (€)":       vt.cost_per_km,
+        "Max available":         vt.max_available,
+    } for vt in st.session_state.vehicle_types]
+
+    edited_fleet = st.data_editor(
+        fleet_data,
+        width='stretch',
+        hide_index=True,
+        column_config={
+            "ID": st.column_config.NumberColumn(disabled=True),
+            "Vehicle type": st.column_config.TextColumn(disabled=True),
+            "Max available": st.column_config.NumberColumn(min_value=0, max_value=100, step=1)
+        }
+    )
+    # Sync fleet changes
+    for i, row in enumerate(edited_fleet):
+        st.session_state.vehicle_types[i].capacity_tonnes = row["Payload (t)"]
+        st.session_state.vehicle_types[i].fixed_cost = row["Fixed cost (€/day)"]
+        st.session_state.vehicle_types[i].cost_per_km = row["Cost per km (€)"]
+        st.session_state.vehicle_types[i].max_available = row["Max available"]
 
     st.caption("**Effective max pallets** = min(floor capacity, weight capacity). "
                "Floor capacity = how many pallets fit on the cargo floor in a single layer. "

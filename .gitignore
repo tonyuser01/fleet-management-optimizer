@@ -1,14 +1,12 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-.env
-.venv
-env/
 venv/
-ENV/
-.streamlit/
-*.log
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
 .DS_Store
-.idea/
-.vscode/
-*.csv

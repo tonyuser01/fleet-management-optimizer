@@ -73,6 +73,13 @@ def optimize_fleet(
         'balanced'     — maximise fleet utilisation (~85%), minimise cost
     """
     ranges = [range(0, vt.max_available + 1) for vt in vehicle_types]
+    
+    # Safety check for combinatorial explosion
+    total_combinations = 1
+    for r in ranges: total_combinations *= len(r)
+    if total_combinations > 50000:
+        return None, [] # Or handle more gracefully for large fleets
+
     feasible: List[FleetSolution] = []
 
     for combo in product(*ranges):
@@ -136,17 +143,29 @@ def sensitivity_analysis(
 def get_best_vehicle_for_route(
     demand: float, 
     distance: float, 
-    vehicle_types: List[VehicleType]
+    vehicle_types: List[VehicleType],
+    current_usage: Optional[Dict[int, int]] = None,
+    needs_refrigeration: bool = False
 ) -> Tuple[Optional[VehicleType], float]:
     """
     F(Z) from theory: Finds the cheapest vehicle (Fixed + Variable) 
     that can transport demand Z over the given distance.
+    Now respects max_available constraints if current_usage is provided.
     """
     best_v = None
     min_total_cost = float('inf')
     
     for vt in vehicle_types:
         if vt.capacity >= demand:
+            # Check refrigeration compatibility
+            if needs_refrigeration and not vt.is_refrigerated:
+                continue
+            # Check if we have this vehicle available
+            if current_usage is not None:
+                used = current_usage.get(vt.id, 0)
+                if used >= vt.max_available:
+                    continue
+
             cost = vt.fixed_cost + (distance * vt.cost_per_km)
             if cost < min_total_cost:
                 min_total_cost = cost
@@ -161,7 +180,7 @@ def solve_fsmvrp_combined_savings(
     vehicle_types: List[VehicleType]
 ) -> List[Route]:
     """
-    Implementare Combined Savings (CS) pentru FSMVRP.
+    Combined Savings (CS) implementation for FSMVRP.
     S_ij = s_ij + F(Zi) + F(Zj) - F(Zi + Zj)
     """
     if not customers:
@@ -175,23 +194,32 @@ def solve_fsmvrp_combined_savings(
                            full_path[i+1].lat, full_path[i+1].lon)
         return d
 
-    # 1. Inițializare: Fiecare client are propria rută
-    # route_data păstrează clienții, cererea, distanța și tipul de vehicul optim
+    # Track fleet usage: {vehicle_type_id: count}
+    fleet_usage: Dict[int, int] = {vt.id: 0 for vt in vehicle_types}
+
+    # 1. Initialization: Every customer has their own route
     current_routes: List[Dict[str, Any]] = []
     for c in customers:
         dist = _get_dist([c])
-        vt, cost = get_best_vehicle_for_route(c.demand, dist, vehicle_types)
+        # During init, we try to assign but we don't strictly block yet 
+        # because we might not have enough vehicles for 1-to-1 routes.
+        vt, cost = get_best_vehicle_for_route(
+            c.demand, dist, vehicle_types, 
+            needs_refrigeration=c.needs_refrigeration
+        )
         if vt:
             current_routes.append({
                 'customers': [c],
                 'demand': c.demand,
                 'dist': dist,
                 'vt': vt,
-                'cost': cost
+                'cost': cost,
+                'needs_refrigeration': c.needs_refrigeration
             })
+            fleet_usage[vt.id] += 1
 
-    # 2. Calculăm economiile Combined Savings (CS)
-    # Folosim o abordare iterativă simplificată pentru CS
+    # 2. Calculate Combined Savings (CS)
+    # Using a simplified iterative approach for CS
     merged_any = True
     while merged_any:
         merged_any = False
@@ -205,37 +233,43 @@ def solve_fsmvrp_combined_savings(
                 ri = current_routes[i]
                 rj = current_routes[j]
                 
-                # Verificăm dacă clienții pot fi uniți (ri[-1] -> rj[0])
-                # Notă: Într-o implementare completă verificăm poziția în listă. 
-                # Aici simulăm fuziunea de rute Clarke-Wright.
-                
                 combined_customers = ri['customers'] + rj['customers']
                 combined_demand = ri['demand'] + rj['demand']
                 combined_dist = _get_dist(combined_customers)
+                combined_needs_ref = ri['needs_refrigeration'] or rj['needs_refrigeration']
                 
                 # F(Zi + Zj)
                 best_vt_merged, cost_merged = get_best_vehicle_for_route(
-                    combined_demand, combined_dist, vehicle_types
+                    combined_demand, combined_dist, vehicle_types,
+                    needs_refrigeration=combined_needs_ref
                 )
                 
                 if not best_vt_merged: continue
                 
-                # Constrângerea M_k (Fleet Availability)
-                # Verificăm dacă prin această fuziune nu depășim numărul total de vehicule pe tip
-                # (Simulare simplificată: verificăm doar vehiculul curent)
+                # --- Finite Fleet Constraint Check ---
+                # If we merge, we release vt_i and vt_j, and acquire vt_merged
+                test_usage = fleet_usage.copy()
+                test_usage[ri['vt'].id] -= 1
+                test_usage[rj['vt'].id] -= 1
+                test_usage[best_vt_merged.id] += 1
                 
+                # Check if this merge is feasible with the available fleet
+                if any(test_usage[tid] > next(v for v in vehicle_types if v.id == tid).max_available 
+                       for tid in test_usage):
+                    continue
+
                 # Formula CS: S_ij = (Cost_i + Cost_j) - Cost_merged
                 cs_value = (ri['cost'] + rj['cost']) - cost_merged
                 
                 if cs_value > max_cs and cs_value > 0:
                     max_cs = cs_value
                     best_merge = (i, j, combined_customers, combined_demand, 
-                                  combined_dist, best_vt_merged, cost_merged)
+                                  combined_dist, best_vt_merged, cost_merged, 
+                                  test_usage, combined_needs_ref)
 
         if best_merge:
-            idx_i, idx_j, new_cust, new_dem, new_dist, new_vt, new_cost = best_merge
-            # Actualizăm lista de rute
-            # Ștergem rutele vechi (de la indexul mai mare la cel mai mic)
+            idx_i, idx_j, new_cust, new_dem, new_dist, new_vt, new_cost, new_usage, new_ref = best_merge
+            # Update route list
             first = min(idx_i, idx_j)
             second = max(idx_i, idx_j)
             current_routes.pop(second)
@@ -243,11 +277,13 @@ def solve_fsmvrp_combined_savings(
             
             current_routes.append({
                 'customers': new_cust, 'demand': new_dem, 
-                'dist': new_dist, 'vt': new_vt, 'cost': new_cost
+                'dist': new_dist, 'vt': new_vt, 'cost': new_cost,
+                'needs_refrigeration': new_ref
             })
             merged_any = True
+            fleet_usage = new_usage
 
-    # 3. Transformăm în obiecte Route
+    # 3. Transform into Route objects
     final_routes = []
     for r in current_routes:
         final_routes.append(Route(
