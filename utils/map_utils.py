@@ -5,13 +5,27 @@ Renders depots, customers, and optimized routes on an interactive map.
 import folium
 from folium import plugins
 from typing import List, Optional
+import re
 from utils.data_models import Depot, Customer, Route
 
-DEPOT_COLORS  = ["darkblue", "darkred", "darkgreen", "purple", "orange"]
-ROUTE_COLORS  = [
-    "#E94560", "#3B8BD4", "#1D9E75", "#BA7517", "#9c42c9",
-    "#D4537E", "#185FA5", "#0F6E56", "#634802", "#6b2fa0",
+DEPOT_COLORS = ["darkblue", "darkred", "darkgreen", "purple", "orange"]
+ROUTE_COLORS = [
+    "#E94560",  # roșu aprins
+    "#2196F3",  # albastru
+    "#FF9800",  # portocaliu
+    "#9C27B0",  # violet
+    "#00BCD4",  # cyan
+    "#F44336",  # roșu închis
+    "#4CAF50",  # verde
+    "#FF5722",  # portocaliu închis
+    "#673AB7",  # indigo
+    "#009688",  # teal
 ]
+
+
+def clean_name(name: str) -> str:
+    """Removes virtual suffixes like (📦 P1) or (❄️ P2)."""
+    return re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name).strip()
 
 
 def build_map(
@@ -20,27 +34,21 @@ def build_map(
     routes: Optional[List[Route]] = None,
     zoom: int = 11
 ) -> folium.Map:
-    """
-    Build a Folium map with:
-      - Depot markers with influence radius
-      - Customer circle markers colored by assigned depot
-      - Animated route polylines (AntPath)
-      - Toggleable layer control
-      - Fullscreen and measure tools
-    """
     all_lats = [d.lat for d in depots] + [c.lat for c in customers]
     all_lons = [d.lon for d in depots] + [c.lon for c in customers]
     center = (sum(all_lats) / len(all_lats), sum(all_lons) / len(all_lons))
 
-    m = folium.Map(location=center, zoom_start=zoom,
-                   tiles="OpenStreetMap", control_scale=True)
+    m = folium.Map(
+        location=center,
+        zoom_start=zoom,
+        tiles="OpenStreetMap",
+        control_scale=True
+    )
 
-    folium.TileLayer("CartoDB positron",     name="CartoDB Light").add_to(m)
-    folium.TileLayer("CartoDB dark_matter",  name="CartoDB Dark").add_to(m)
-
-    fg_depots    = folium.FeatureGroup(name="🏭 Depots",    show=True)
-    fg_customers = folium.FeatureGroup(name="📦 Customers", show=True)
-    fg_routes    = folium.FeatureGroup(name="🛣️ Routes",   show=True)
+    # Feature groups — liniile se adaugă direct pe m, markerii în feature groups
+    fg_routes    = folium.FeatureGroup(name="🛣️ Routes",    show=True)
+    fg_customers = folium.FeatureGroup(name="📦 Customers",  show=True)
+    fg_depots    = folium.FeatureGroup(name="🏭 Depots",     show=True)
 
     # ── Depot markers ─────────────────────────────────────────────────────────
     for i, depot in enumerate(depots):
@@ -86,7 +94,7 @@ def build_map(
             fill=True, fill_color=color, fill_opacity=0.85,
             popup=folium.Popup(
                 f"""<div style='font-family:sans-serif;min-width:160px'>
-                    <b>{c.name}</b><br>
+                    <b>{clean_name(c.name)}</b><br>
                     <hr style='margin:4px 0'>
                     📦 Demand: <b>{c.demand} t</b><br>
                     🕐 Time window: {c.time_window_open}:00 – {c.time_window_close}:00<br>
@@ -94,7 +102,7 @@ def build_map(
                 </div>""",
                 max_width=200
             ),
-            tooltip=f"📦 {c.name} ({c.demand}t)"
+            tooltip=f"📦 {clean_name(c.name)} ({c.demand}t)"
         ).add_to(fg_customers)
 
     # ── Route polylines ───────────────────────────────────────────────────────
@@ -102,59 +110,136 @@ def build_map(
         for i, route in enumerate(routes):
             if not route.customers:
                 continue
-            color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
-            coords = ([[route.depot.lat, route.depot.lon]]
-                      + [[c.lat, c.lon] for c in route.customers]
-                      + [[route.depot.lat, route.depot.lon]])
 
+            color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
+            coords = (
+                [[route.depot.lat, route.depot.lon]]
+                + [[c.lat, c.lon] for c in route.customers]
+                + [[route.depot.lat, route.depot.lon]]
+            )
+
+            sequence_html = (
+                f"<b>{route.depot.name}</b> (start)<br>"
+                + "".join(
+                    f"&nbsp;&nbsp;{j+1}. {clean_name(c.name)}<br>"
+                    for j, c in enumerate(route.customers)
+                )
+                + f"<b>{route.depot.name}</b> (return)"
+            )
+
+            # Grosimi alternante: 6, 4, 6, 4... ca rutele suprapuse să fie vizibile
+            weight = 6 if i % 2 == 0 else 4
+
+            # Linie principală — adăugată DIRECT pe hartă (nu în fg_routes)
+            # Garantează că liniile sunt randate primele, sub orice marker
             folium.PolyLine(
-                locations=coords, color=color, weight=3, opacity=0.8,
-                tooltip=(f"Route {i+1} — {route.depot.name} | "
-                         f"{len(route.customers)} customers | "
-                         f"{route.total_distance:.1f} km | {route.total_demand:.1f}t"),
+                locations=coords,
+                color=color,
+                weight=weight,
+                opacity=0.85,
+                tooltip=(
+                    f"Route {i+1} — {route.depot.name} | "
+                    f"{len(route.customers)} stops | "
+                    f"{route.total_distance:.1f} km"
+                ),
                 popup=folium.Popup(
-                    f"""<div style='font-family:sans-serif;min-width:200px'>
+                    f"""<div style='font-family:sans-serif;min-width:220px'>
                         <b style='color:{color}'>Route {i+1}</b><br>
                         <hr style='margin:4px 0'>
                         🏭 Depot: {route.depot.name}<br>
                         🚛 Vehicle: {route.vehicle_type.name}<br>
-                        📦 Total demand: {route.total_demand} t<br>
+                        📦 Demand: {route.total_demand} t<br>
                         📏 Distance: {route.total_distance} km<br>
-                        💰 Estimated cost: {route.total_cost:.0f} €<br>
-                        <b>Sequence:</b><br>
-                        {'<br>'.join(f'  {j+1}. {c.name}' for j, c in enumerate(route.customers))}
+                        💰 Cost: {route.total_cost:.0f} €<br>
+                        <hr style='margin:4px 0'>
+                        <b>Sequence:</b><br>{sequence_html}
                     </div>""",
-                    max_width=240
+                    max_width=280
                 )
-            ).add_to(fg_routes)
+            ).add_to(m)
 
+            # AntPath animat — direct pe hartă
             plugins.AntPath(
-                locations=coords, color=color,
-                weight=2, opacity=0.5,
-                delay=1200, dash_array=[10, 20],
-                pulse_color="#fff"
+                locations=coords,
+                color=color,
+                weight=3,
+                opacity=0.5,
+                delay=1200,
+                dash_array=[10, 20],
+                pulse_color="#ffffff"
+            ).add_to(m)
+
+            # Număr rută la mijlocul traseului — în fg_routes
+            mid_idx = len(coords) // 2
+            mid_lat, mid_lon = coords[mid_idx]
+            folium.Marker(
+                location=[mid_lat, mid_lon],
+                icon=folium.DivIcon(
+                    html=f"""<div style="
+                        background:{color};
+                        color:white;
+                        border-radius:50%;
+                        width:26px;height:26px;
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:13px;font-weight:bold;
+                        border:2px solid white;
+                        box-shadow:0 2px 5px rgba(0,0,0,0.5);
+                        font-family:sans-serif;">{i+1}</div>""",
+                    icon_size=(26, 26),
+                    icon_anchor=(13, 13)
+                ),
+                tooltip=f"Route {i+1}"
             ).add_to(fg_routes)
 
-        # Legend
+            # Număr stop pe fiecare client — în fg_routes
+            for j, c in enumerate(route.customers):
+                folium.Marker(
+                    location=[c.lat, c.lon],
+                    icon=folium.DivIcon(
+                        html=f"""<div style="
+                            background:white;
+                            color:{color};
+                            border-radius:50%;
+                            width:16px;height:16px;
+                            display:flex;align-items:center;justify-content:center;
+                            font-size:9px;font-weight:bold;
+                            border:1.5px solid {color};
+                            box-shadow:0 1px 3px rgba(0,0,0,0.3);
+                            font-family:sans-serif;
+                            margin-left:10px;margin-top:-22px;">{j+1}</div>""",
+                        icon_size=(16, 16),
+                        icon_anchor=(8, 8)
+                    ),
+                    tooltip=f"R{i+1} — Stop {j+1}: {clean_name(c.name)}"
+                ).add_to(fg_routes)
+
+        # Legendă
         legend_items = "".join(
-            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
-            f'<div style="width:24px;height:4px;background:{ROUTE_COLORS[i % len(ROUTE_COLORS)]};border-radius:2px"></div>'
-            f'<span style="font-size:11px">Route {i+1} ({r.depot.name.split()[-1]}) — {r.total_distance:.1f} km</span></div>'
+            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+            f'<div style="width:14px;height:14px;border-radius:50%;'
+            f'background:{ROUTE_COLORS[i % len(ROUTE_COLORS)]};'
+            f'color:white;font-size:9px;font-weight:bold;'
+            f'display:flex;align-items:center;justify-content:center;">{i+1}</div>'
+            f'<span style="font-size:11px">'
+            f'Route {i+1} — {r.depot.name.split()[-1]} — '
+            f'{r.total_distance:.1f} km — {len(r.customers)} stops'
+            f'</span></div>'
             for i, r in enumerate(routes)
         )
-        m.get_root().html.add_child(folium.Element(
+        m.get_root().add_child(folium.Element(
             f"""<div style='position:fixed;bottom:30px;right:10px;z-index:1000;
                  background:white;padding:10px 14px;border-radius:8px;
                  box-shadow:0 2px 8px rgba(0,0,0,0.2);font-family:sans-serif;
-                 max-height:200px;overflow-y:auto'>
+                 max-height:220px;overflow-y:auto'>
               <b style="font-size:12px">🗺️ Generated routes</b><br><br>
               {legend_items}
             </div>"""
         ))
 
-    fg_depots.add_to(m)
-    fg_customers.add_to(m)
+    # Feature groups — routes (jos) → customers → depots (sus)
     fg_routes.add_to(m)
+    fg_customers.add_to(m)
+    fg_depots.add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
     plugins.Fullscreen().add_to(m)

@@ -36,7 +36,8 @@ def nearest_neighbor_routes(
     vehicle_type: VehicleType,
     max_distance: float = float('inf'),
     start_hour: int = 8,
-    speed_kmh: float = 40.0
+    speed_kmh: float = 40.0,
+    shift_end_hour: int = 22
 ) -> List[Route]:
     """
     Nearest Neighbor heuristic for a single depot.
@@ -65,7 +66,7 @@ def nearest_neighbor_routes(
                 break
             
             # Check time windows (VRPTW)
-            if not _is_time_feasible(depot, route_customers + [nearest], speed_kmh, start_hour):
+            if not _is_time_feasible(depot, route_customers + [nearest], speed_kmh, start_hour, shift_end_hour):
                 break
                 
             route_customers.append(nearest)
@@ -97,7 +98,8 @@ def clarke_wright_routes(
     vehicle_type: VehicleType,
     max_distance: float = float('inf'),
     start_hour: int = 8,
-    speed_kmh: float = 40.0
+    speed_kmh: float = 40.0,
+    shift_end_hour: int = 22
 ) -> List[Route]:
     """
     Clarke-Wright Savings algorithm for a single depot.
@@ -152,7 +154,7 @@ def clarke_wright_routes(
                 continue
             
             # Time Window check (VRPTW)
-            if not _is_time_feasible(depot, merged, speed_kmh, start_hour):
+            if not _is_time_feasible(depot, merged, speed_kmh, start_hour, shift_end_hour):
                 continue
                 
             # Update load cache and references
@@ -277,7 +279,7 @@ def get_transport_stats(routes: List[Route]) -> Dict[str, float]:
         "performance": performance
     }
 
-def _is_time_feasible(depot: Depot, customers: List[Customer], speed_kmh: float, start_hour: int) -> bool:
+def _is_time_feasible(depot: Depot, customers: List[Customer], speed_kmh: float, start_hour: int, shift_end_hour: int = 22) -> bool:
     """
     Checks if a customer sequence is feasible regarding time windows.
     Includes driving time and service time.
@@ -305,8 +307,8 @@ def _is_time_feasible(depot: Depot, customers: List[Customer], speed_kmh: float,
     dist_back = haversine(cur_lat, cur_lon, depot.lat, depot.lon)
     arrival_depot = current_time + (dist_back / speed_kmh) * 60.0
 
-    # Optional: Check if return to depot is before a global shift end (e.g., 22:00)
-    return arrival_depot <= 22 * 60 
+    # Check if return to depot is before the global shift end
+    return arrival_depot <= shift_end_hour * 60 
 
 
 def _route_dist(depot: Depot, customers: List[Customer]) -> float:
@@ -356,6 +358,28 @@ def _preprocess_split_deliveries(customers: List[Customer], vehicle_capacity: fl
 
     return processed_customers
 
+def validate_refrigeration_assignment(routes: List[Route]) -> List[str]:
+    """
+    Post-solve validation: checks that no customer requiring refrigeration
+    has been assigned to a non-refrigerated vehicle.
+
+    Returns a list of warning strings (empty if no violations found).
+    This can happen if the CS merging logic incorrectly absorbs a
+    refrigerated task into a non-refrigerated route.
+    """
+    warnings = []
+    for i, route in enumerate(routes):
+        if not route.vehicle_type.is_refrigerated:
+            for c in route.customers:
+                if c.needs_refrigeration:
+                    warnings.append(
+                        f"Route {i+1} ({route.depot.name}): customer "
+                        f"'{c.name}' requires refrigeration but is assigned "
+                        f"to '{route.vehicle_type.name}' (non-refrigerated)."
+                    )
+    return warnings
+
+
 def solve_mdvrp(
     depots: List[Depot],
     customers: List[Customer],
@@ -365,8 +389,9 @@ def solve_mdvrp(
     max_distance: float = float('inf'),
     load_balance: bool = False,
     start_hour: int = 8,
-    speed_kmh: float = 40.0
-) -> Tuple[List[Route], Dict[int, List[Customer]]]:
+    speed_kmh: float = 40.0,
+    shift_end_hour: int = 22
+) -> Tuple[List[Route], Dict[int, List[Customer]], List[str]]:
     """
     Solve MDVRP:
       1. Assign customers to nearest depot
@@ -390,16 +415,43 @@ def solve_mdvrp(
     def solve_for_depot(d, custs):
         if not custs:
             return []
-        
+
         if isinstance(vehicle_type, list):
-            # Use Combined Savings for mixed fleet (FSMVRP logic)
+            # Filtrează vehiculele disponibile la acest depozit bazat pe fleet_allocation
+            if d.fleet_allocation:
+                depot_vts = [
+                    vt for vt in vehicle_type
+                    if d.fleet_allocation.get(vt.id, 0) > 0
+                ]
+                # Dacă depozitul nu are niciun vehicul alocat, folosește toată flota
+                if not depot_vts:
+                    depot_vts = vehicle_type
+            else:
+                depot_vts = vehicle_type
+
             from utils.fsmvrp_optimizer import solve_fsmvrp_combined_savings
-            return solve_fsmvrp_combined_savings(d, custs, vehicle_type)
+            return solve_fsmvrp_combined_savings(d, custs, depot_vts)
+
+        # Vehicul single — verifică dacă e disponibil la acest depozit
+        if d.fleet_allocation and d.fleet_allocation.get(vehicle_type.id, 0) == 0:
+            # Vehiculul selectat nu e la acest depozit
+            # Fallback: folosește cel mai ieftin vehicul disponibil la depozit
+            available_vts = [
+                vt for vt in (vehicle_type if isinstance(vehicle_type, list) else [vehicle_type])
+                if d.fleet_allocation.get(vt.id, 0) > 0
+            ]
+            if not available_vts:
+                # Niciun vehicul la depozit — returnează gol, va fi tratat de load balancer
+                return []
+            active_vt = available_vts[0]
+        else:
+            active_vt = vehicle_type
 
         if algorithm == "nearest_neighbor":
-            routes = nearest_neighbor_routes(d, custs, vehicle_type.capacity, vehicle_type, max_distance, start_hour, speed_kmh)
+            routes = nearest_neighbor_routes(d, custs, active_vt.capacity, active_vt, max_distance, start_hour, speed_kmh, shift_end_hour)
         else:
-            routes = clarke_wright_routes(d, custs, vehicle_type.capacity, vehicle_type, max_distance, start_hour, speed_kmh)
+            routes = clarke_wright_routes(d, custs, active_vt.capacity, active_vt, max_distance, start_hour, speed_kmh, shift_end_hour)
+
         if apply_2opt:
             routes = [two_opt_improve(r) for r in routes]
         return routes
@@ -410,8 +462,8 @@ def solve_mdvrp(
     if load_balance:
         # Iteratively move customers from overloaded depots to underloaded ones
         for _ in range(15): # Max iterations to prevent infinite loops
-            overloaded = [d for d in depots if len(depot_routes[d.id]) > d.num_vehicles]
-            underloaded = [d for d in depots if len(depot_routes[d.id]) < d.num_vehicles]
+            overloaded  = [d for d in depots if len(depot_routes[d.id]) > (sum(d.fleet_allocation.values()) if d.fleet_allocation else d.num_vehicles)]
+            underloaded = [d for d in depots if len(depot_routes[d.id]) < (sum(d.fleet_allocation.values()) if d.fleet_allocation else d.num_vehicles)]
             
             if not overloaded or not underloaded:
                 break
@@ -445,4 +497,6 @@ def solve_mdvrp(
     for d_id in depot_routes:
         all_routes.extend(depot_routes[d_id])
 
-    return all_routes, assignment
+    refrigeration_warnings = validate_refrigeration_assignment(all_routes)
+
+    return all_routes, assignment, refrigeration_warnings

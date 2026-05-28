@@ -19,6 +19,31 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.header("Multi-Depot Vehicle Routing Problem (MDVRP)")
 
+    st.markdown("""
+    ### What problem does MDVRP solve?
+
+    A general merchandise distributor operates **multiple warehouses (depots)** spread across 
+    a city or region. Each depot has a limited fleet of vehicles and must serve a set of 
+    customers (stores) in its area. The central question is:
+
+    > *"What is the optimal set of delivery routes, starting and ending at depots, 
+    that serves all customers at minimum total cost?"*
+
+    **The MDVRP answers:**
+    - Which depot should serve which customer?
+    - In what order should customers be visited?
+    - How many vehicles are needed at each depot?
+    - What is the minimum total distance and cost?
+
+    **Why is it useful?**
+    For a distributor like Kaufland Romania operating 3 distribution centers in Bucharest, 
+    the MDVRP directly reduces fuel costs, driver hours, and vehicle wear by finding 
+    efficient multi-stop routes instead of individual depot-to-customer trips.
+
+    **Real-world impact:** Compared to naive routing (one vehicle per customer), 
+    Clarke-Wright Savings typically achieves **15–30% distance reduction**.
+    """)
+    st.markdown("---")
     st.markdown(r"""
 The MDVRP is formally defined on a complete graph $G = (V, E)$, where $V$ is the set of nodes
 representing depots and customers, and $E$ is the set of arcs representing feasible routes
@@ -32,7 +57,6 @@ The node set $V$ is partitioned into two distinct subsets:
 
     st.markdown("---")
     st.subheader("Sets, Parameters and Constraints")
-
     st.markdown(r"""
 | Symbol | Description |
 |---|---|
@@ -44,7 +68,7 @@ The node set $V$ is partitioned into two distinct subsets:
 | $m_d$ | Maximum number of vehicles available at depot $d$ (hard resource constraint) |
 | $T_{\max}$ | Maximum allowable travel cost/time per route (driver shift or fuel range limit) |
 | $u_i$ | Auxiliary MTZ variable: cumulative load/position along route at node $i$ |
-""")
+    """)
 
     st.markdown("---")
     st.subheader("Decision Variables")
@@ -57,60 +81,60 @@ cumulative load or position along a route, ensuring every route is connected to 
 
     st.markdown("---")
     st.subheader("Objective Function")
+    st.markdown("**(1)** Minimize total routing cost across all vehicles and arcs:")
     st.markdown(r"""
-Minimize total routing cost across all vehicles and arcs:
-
-$$\min \quad Z = \sum_{k \in K} \sum_{(i,j) \in A} c_{i,j} \cdot x_{i,j,k} \tag{1}$$
+$$\min \quad Z = \sum_{k \in K} \sum_{(i,j) \in A} c_{i,j} \cdot x_{i,j,k}$$
     """)
 
     st.markdown("---")
     st.subheader("Constraints")
 
-    st.markdown("**C1 — Unique Customer Visit** (each customer visited exactly once):")
+    st.markdown("**(2) C1 — Unique Customer Visit** (each customer visited exactly once):")
     st.markdown(r"""
-$$\sum_{k \in K} \sum_{j \in V} x_{i,j,k} = 1 \quad \forall i \in C \tag{2}$$
+$$\sum_{k \in K} \sum_{j \in V} x_{i,j,k} = 1 \quad \forall i \in C$$
     """)
 
-    st.markdown("**C2 — Flow Conservation** (vehicle entering a node must also depart from it):")
+    st.markdown("**(3) C2 — Flow Conservation** (vehicle entering a node must also depart from it):")
     st.markdown(r"""
-$$\sum_{j \in V} x_{i,j,k} = \sum_{j \in V} x_{j,i,k} \quad \forall i \in V,\; \forall k \in K \tag{3}$$
+$$\sum_{j \in V} x_{i,j,k} = \sum_{j \in V} x_{j,i,k} \quad \forall i \in V,\; \forall k \in K$$
     """)
 
-    st.markdown("**C3 — Capacity Constraint** (total demand on a route cannot exceed vehicle capacity):")
+    st.markdown("**(4) C3 — Capacity Constraint** (total demand on a route cannot exceed vehicle capacity):")
     st.markdown(r"""
-$$\sum_{i \in C} d_i \cdot \sum_{j \in V} x_{i,j,k} \leq Q_k \quad \forall k \in K \tag{4}$$
+$$\sum_{i \in C} d_i \cdot \sum_{j \in V} x_{i,j,k} \leq Q_k \quad \forall k \in K$$
     """)
 
     st.markdown(r"""
-**C4 — Total Route Cost/Length Constraint** (total travel cost of a route cannot exceed $T_{\max}$,
+**(5) C4 — Total Route Cost/Length Constraint** (total travel cost of a route cannot exceed $T_{\max}$,
 representing operational limits such as driver shift durations or maximum fuel range):
-
-$$\sum_{(i,j) \in A} c_{i,j} \cdot x_{i,j,k} \leq T_{\max} \quad \forall k \in K \tag{5}$$
+    """)
+    st.markdown(r"""
+$$\sum_{(i,j) \in A} c_{i,j} \cdot x_{i,j,k} \leq T_{\max} \quad \forall k \in K$$
     """)
 
-    st.markdown("**C5 — Depot Integrity and Vehicle Availability** (each route originates from and returns to the same depot):")
+    st.markdown("**(6-8) C5 — Depot Integrity and Vehicle Availability** (each route originates from and returns to the same depot):")
     st.markdown(r"""
-$$\sum_{j \in C} x_{d(k),j,k} = 1 \quad \forall k \in K \tag{6}$$
+$$\sum_{j \in C} x_{d(k),j,k} = 1 \quad \forall k \in K$$
 
-$$\sum_{i \in C} x_{i,d(k),k} = 1 \quad \forall k \in K \tag{7}$$
+$$\sum_{i \in C} x_{i,d(k),k} = 1 \quad \forall k \in K$$
 
-$$\sum_{k \in K_d} \sum_{j \in C} x_{d,j,k} \leq m_d \quad \forall d \in D \tag{8}$$
+$$\sum_{k \in K_d} \sum_{j \in C} x_{d,j,k} \leq m_d \quad \forall d \in D$$
     """)
 
-    st.markdown("**C6 — Sub-tour Elimination — MTZ Constraints** (prevents isolated cycles not connected to a depot):")
+    st.markdown("**(9-11) C6 — Sub-tour Elimination — MTZ Constraints** (prevents isolated cycles not connected to a depot):")
     st.markdown(r"""
-$$u_i - u_j + Q_k \cdot x_{i,j,k} \leq Q_k - d_j \quad \forall i,j \in C,\; i \neq j,\; \forall k \in K \tag{9}$$
+$$u_i - u_j + Q_k \cdot x_{i,j,k} \leq Q_k - d_j \quad \forall i,j \in C,\; i \neq j,\; \forall k \in K$$
 
-$$d_i \leq u_i \leq Q_k \quad \forall i \in C,\; \forall k \in K \tag{10}$$
+$$d_i \leq u_i \leq Q_k \quad \forall i \in C,\; \forall k \in K$$
 
 In compact form, where $N$ represents the total number of vehicles:
 
-$$u_i - u_j + N \cdot x_{i,j,k} \leq N - 1 \quad \forall i,j \in C,\; i \neq j \tag{11}$$
+$$u_i - u_j + N \cdot x_{i,j,k} \leq N - 1 \quad \forall i,j \in C,\; i \neq j$$
     """)
 
-    st.markdown("**C7 — Integrality:**")
+    st.markdown("**(12) C7 — Integrality:**")
     st.markdown(r"""
-$$x_{i,j,k} \in \{0, 1\} \quad \forall i,j \in V,\; \forall k \in K \tag{12}$$
+$$x_{i,j,k} \in \{0, 1\} \quad \forall i,j \in V,\; \forall k \in K$$
     """)
 
     st.markdown("---")
@@ -130,6 +154,35 @@ with tab2:
     st.header("Fleet Size and Mix Vehicle Routing Problem (FSMVRP)")
 
     st.markdown("""
+    ### What problem does FSMVRP solve?
+
+    The classical MDVRP assumes a **homogeneous fleet** — all vehicles are identical. 
+    In reality, distributors operate mixed fleets: small urban trucks, medium rigid trucks, 
+    heavy articulated vehicles, and refrigerated units — each with different capacities, 
+    fixed costs, and operational costs.
+
+    The FSMVRP adds a strategic decision layer:
+
+    > *"How many vehicles of each type should we deploy to minimize total cost 
+    (fixed acquisition + variable routing)?"*
+
+    **The FSMVRP answers:**
+    - Should we use 3 large trucks or 6 small ones?
+    - What is the optimal fleet composition for today's demand?
+    - How does fleet cost change if demand increases by 20%?
+    - Is it worth leasing an extra refrigerated truck?
+
+    **Why is it useful?**
+    Fleet composition is a **long-term strategic decision** — vehicle acquisition or 
+    leasing contracts span months or years. A suboptimal fleet mix can cost tens of 
+    thousands of euros annually in excess fixed costs or inefficient routing.
+
+    **Key insight:** Minimizing distance ≠ minimizing cost. A solution using many 
+    small vehicles may travel less total distance but cost more due to higher 
+    cumulative fixed costs than fewer large vehicles.
+    """)
+    st.markdown("---")
+    st.markdown("""
 The FSMVRP extends the classical VRP by introducing **vehicle heterogeneity as a decision variable**.
 The objective is to minimize total costs consisting of fixed acquisition/leasing costs and
 vehicle-dependent operational costs.
@@ -142,8 +195,9 @@ The key distinction from the classical VRP lies in the cost structure:
 
     st.markdown("---")
     st.subheader("Objective Function")
+    st.markdown("**(1)** Minimize total costs (fixed + variable):")
     st.markdown(r"""
-$$\min \quad Z = \sum_{k \in K} \left( F_k \cdot \sum_{j \in C} x_{0,j,k} \right) + \sum_{k \in K} \sum_{(i,j) \in A} c_{i,j,k} \cdot x_{i,j,k} \tag{1}$$
+$$\min \quad Z = \sum_{k \in K} \left( F_k \cdot \sum_{j \in C} x_{0,j,k} \right) + \sum_{k \in K} \sum_{(i,j) \in A} c_{i,j,k} \cdot x_{i,j,k}$$
 
 The first term sums the **fixed cost** $F_k$ for every vehicle $k$ that departs from the depot (node 0).
 The second term captures the **variable routing costs** across all arcs.
@@ -152,37 +206,37 @@ The second term captures the **variable routing costs** across all arcs.
     st.markdown("---")
     st.subheader("Constraints")
 
-    st.markdown("**C1 — Customer Service** (each customer visited exactly once by any vehicle type):")
+    st.markdown("**(2) C1 — Customer Service** (each customer visited exactly once by any vehicle type):")
     st.markdown(r"""
-$$\sum_{k \in K} \sum_{j \in V} x_{i,j,k} = 1 \quad \forall i \in C \tag{2}$$
+$$\sum_{k \in K} \sum_{j \in V} x_{i,j,k} = 1 \quad \forall i \in C$$
     """)
 
-    st.markdown("**C2 — Flow Conservation** (vehicle $k$ entering customer $i$ must also depart from it):")
+    st.markdown(r"**(3) C2 — Flow Conservation** (vehicle $k$ entering customer $i$ must also depart from it):")
     st.markdown(r"""
-$$\sum_{j \in V} x_{i,j,k} = \sum_{j \in V} x_{j,i,k} \quad \forall i \in C,\; \forall k \in K \tag{3}$$
+$$\sum_{j \in V} x_{i,j,k} = \sum_{j \in V} x_{j,i,k} \quad \forall i \in C,\; \forall k \in K$$
     """)
 
-    st.markdown("**C3 — Vehicle Capacity Constraint** (total demand on a route must not exceed vehicle capacity):")
+    st.markdown("**(4) C3 — Vehicle Capacity Constraint** (total demand on a route must not exceed vehicle capacity):")
     st.markdown(r"""
-$$\sum_{i \in C} d_i \cdot y_{i,k} \leq Q_k \quad \forall k \in K \tag{4}$$
+$$\sum_{i \in C} d_i \cdot y_{i,k} \leq Q_k \quad \forall k \in K$$
 
 where $y_{i,k}$ is the cumulative demand serviced after reaching customer $i$ on vehicle $k$'s route.
     """)
 
-    st.markdown("**C4 — Sub-tour Elimination** (prevents isolated loops using commodity flow variables $f_{ijk}$):")
+    st.markdown(r"**(5-6) C4 — Sub-tour Elimination** (prevents isolated loops using commodity flow variables $f_{ijk}$):")
     st.markdown(r"""
-$$\sum_{j \in V} f_{i,j,k} - \sum_{j \in V} f_{j,i,k} = d_i \cdot \sum_{j \in V} x_{i,j,k} \quad \forall i \in C,\; \forall k \in K \tag{5}$$
+$$\sum_{j \in V} f_{i,j,k} - \sum_{j \in V} f_{j,i,k} = d_i \cdot \sum_{j \in V} x_{i,j,k} \quad \forall i \in C,\; \forall k \in K$$
 
-$$0 \leq f_{i,j,k} \leq Q_k \cdot x_{i,j,k} \quad \forall (i,j) \in A,\; \forall k \in K \tag{6}$$
+$$0 \leq f_{i,j,k} \leq Q_k \cdot x_{i,j,k} \quad \forall (i,j) \in A,\; \forall k \in K$$
     """)
 
-    st.markdown("**C5 — Integrity and Fleet Availability:**")
+    st.markdown("**(7-9) C5 — Integrity and Fleet Availability:**")
     st.markdown(r"""
-$$x_{i,j,k} \in \{0, 1\} \quad \forall i,j \in V,\; \forall k \in K \tag{7}$$
+$$x_{i,j,k} \in \{0, 1\} \quad \forall i,j \in V,\; \forall k \in K$$
 
-$$\sum_{j \in V} x_{0,j,k} \leq 1 \quad \forall k \in K \tag{8}$$
+$$\sum_{j \in V} x_{0,j,k} \leq 1 \quad \forall k \in K$$
 
-$$\sum_{k \in K_t} \sum_{j \in C} x_{0,j,k} \leq M_t \quad \forall t \in T \tag{9}$$
+$$\sum_{k \in K_t} \sum_{j \in C} x_{0,j,k} \leq M_t \quad \forall t \in T$$
 
 where $M_t$ is the maximum number of vehicles of type $t$ available.
     """)
@@ -194,10 +248,10 @@ where $M_t$ is the maximum number of vehicles of type $t$ available.
 |---|---|---|---|
 | Classical VRP | Variable only | $\sum c_{i,j} \cdot x_{i,j,k}$ | Homogeneous fleet — cost = distance |
 | FSMVRP | Fixed + Variable | $\sum F_k \cdot x_{0,j,k} + \sum c_{i,j,k} \cdot x_{i,j,k}$ | Heterogeneous fleet — vehicle type is a decision variable |
-""")
+    """)
 
     st.warning("""
-**Key trade-off:** A solution that minimizes total distance may **not** minimize total cost
+**Trade-off:** A solution that minimizes total distance may **not** minimize total cost
 if it requires deploying many small vehicles instead of fewer large vehicles.
     """)
 
@@ -217,9 +271,6 @@ the cumulative demand of the route.
 
 This ensures that merging two routes is only beneficial when the combined routing saving
 **and** the fleet-cost saving together justify the operation.
-
-> Research also shows that energy consumption is load-dependent, adding further incentive
-> to optimize vehicle–load combinations beyond simple distance minimization.
     """)
 
     st.markdown("---")
@@ -259,14 +310,50 @@ $$s(i,j) = c(d,i) + c(d,j) - c(i,j)$$
     st.subheader("2. Nearest Neighbor Heuristic")
     st.markdown(r"""
 1. Start at depot $d$
-2. Select nearest feasible unvisited customer:
-$$j^* = \arg\min_{j \in \text{unvisited}} c(i,j) \quad \text{s.t.} \quad \text{load} + d_j \leq Q_k$$
+2. Select nearest feasible unvisited customer: $$j^* = \arg\min_{j \in \text{unvisited}} c(i,j)$$ subject to the capacity constraint:
+$$\text{load} + d_j \leq Q_k$$
+where $\text{load}$ = current vehicle load, $d_j$ = demand of customer $j$, $Q_k$ = vehicle capacity.
+
 3. No feasible customer → close route, open new route from depot
 4. Repeat until all customers are served
 
 **Complexity:** $O(n^2)$
     """)
 
+    st.markdown("---")
+    st.subheader("Clarke-Wright vs Nearest Neighbor — Key Differences")
+    st.markdown(r"""
+Both algorithms solve the same problem (construct feasible VRP routes) but use fundamentally 
+different strategies:
+
+| Aspect | Nearest Neighbor | Clarke-Wright Savings |
+|---|---|---|
+| **Strategy** | Extend one route at a time | Merge pairs of routes |
+| **Starting point** | One route, grows greedily | N individual routes, merges down |
+| **Decision criterion** | Closest unvisited customer | Largest distance saving $s(i,j)$ |
+| **Global awareness** | None — purely local | Yes — considers all pairs |
+| **Complexity** | $O(n^2)$ | $O(n^2 \log n)$ |
+| **Solution quality** | Good, fast | Better, slightly slower |
+| **Risk** | Gets "trapped" in local patterns | Can miss savings if constraints bind early |
+
+**When does Nearest Neighbor perform better?**
+In sparse networks where customers are geographically isolated — the greedy approach 
+naturally finds efficient local clusters without needing to evaluate global savings.
+
+**When does Clarke-Wright perform better?**
+In dense urban networks (like Bucharest) where many customers are close together — 
+the savings algorithm identifies high-value merges that NN would never find because 
+it commits to a route too early.
+
+**Why do we use both in this application?**
+The algorithm comparison tab in the MDVRP Solver allows direct empirical measurement 
+of the Clarke-Wright Efficiency Index:
+
+$$\text{EI}_{CW} = \frac{d_{\text{NN}} - d_{\text{CW}}}{d_{\text{NN}}} \times 100\%$$
+
+A positive EI confirms that Clarke-Wright outperforms Nearest Neighbor on this specific 
+network instance — validating the theoretical superiority in dense urban routing.
+""")
     st.subheader("3. 2-opt Local Search")
     st.markdown(r"""
 Reverses segment $[i{+}1 \ldots j]$ if the swap reduces total distance:
@@ -305,8 +392,6 @@ $$\text{EI}_{CW} = \frac{d_{\text{NN}} - d_{\text{CW}}}{d_{\text{NN}}} \times 10
 where $d_{\text{NN}}$ = Nearest Neighbor total distance, $d_{\text{CW}}$ = Clarke-Wright total distance.
 
 ### Haversine Distance
-
-Used throughout the application for all real-coordinate calculations:
 
 $$\text{dist}(i,j) = 2R \arcsin\sqrt{\sin^2\frac{\varphi_j - \varphi_i}{2} + \cos\varphi_i \cos\varphi_j \sin^2\frac{\lambda_j - \lambda_i}{2}}$$
 

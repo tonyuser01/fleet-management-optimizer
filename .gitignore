@@ -1,12 +1,6 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
 venv/
+.venv/
+__pycache__/
+*.pyc
+.streamlit/config.toml
 .env
-
-# Streamlit
-.streamlit/secrets.toml
-
-# OS
-.DS_Store

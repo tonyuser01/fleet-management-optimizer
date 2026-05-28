@@ -43,6 +43,7 @@ class Depot:
     capacity: int = 1000
     num_vehicles: int = 5
     daily_stock_tonnes: float = 0.0
+    fleet_allocation: Dict[int, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -128,20 +129,23 @@ class Route:
 # ── Sample data: Bucharest distribution network ───────────────────────────────
 
 DEPOTS_BUCHAREST = [
-    Depot(0, "Depot Bucharest North",
+    Depot(0, "D1 — Depot Bucharest North",
           lat=44.5500, lon=26.0800,
           address="Șoseaua Pipera 42, Voluntari, Ilfov",
-          capacity=800, num_vehicles=6, daily_stock_tonnes=85.0),
+          capacity=800, num_vehicles=6, daily_stock_tonnes=85.0,
+          fleet_allocation={0: 2, 1: 2, 2: 1, 3: 1}),  # 2 small, 2 medium, 1 heavy, 1 fridge
 
-    Depot(1, "Depot Bucharest South",
+    Depot(1, "D2 — Depot Bucharest South",
           lat=44.3200, lon=26.1200,
           address="Calea Văcărești 391, Sector 4, București",
-          capacity=600, num_vehicles=5, daily_stock_tonnes=65.0),
+          capacity=600, num_vehicles=5, daily_stock_tonnes=65.0,
+          fleet_allocation={0: 2, 1: 2, 2: 1, 3: 1}),  # 2 small, 2 medium, 1 heavy, 1 fridge
 
-    Depot(2, "Depot Ilfov-Otopeni",
+    Depot(2, "D3 — Depot Ilfov-Otopeni",
           lat=44.5200, lon=25.9500,
           address="Calea București, Otopeni/Chiajna Area",
-          capacity=500, num_vehicles=3, daily_stock_tonnes=50.0),
+          capacity=500, num_vehicles=3, daily_stock_tonnes=50.0,
+          fleet_allocation={0: 2, 1: 1, 2: 1, 3: 0}),  # 2 small, 1 medium, 1 heavy, 0 fridge
 ]
 
 CUSTOMERS_BUCHAREST = [

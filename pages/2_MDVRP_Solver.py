@@ -59,15 +59,38 @@ with st.sidebar:
 
     vt_options = ["Mixed Fleet (Auto-select)"] + [vt.name for vt in st.session_state.vehicle_types]
     vt_sel = st.selectbox("Vehicle type", vt_options, index=0)
-    
+
     if vt_sel == "Mixed Fleet (Auto-select)":
         selected_vt = st.session_state.vehicle_types
     else:
         selected_vt = next(vt for vt in st.session_state.vehicle_types if vt.name == vt_sel)
-        
+
     apply_2opt = st.checkbox("Apply 2-opt improvement", value=True)
-    load_balance = st.checkbox("Enable Load Balancing (M_d constraint)", value=True)
-    max_dist = st.number_input("Maximum route distance (km)", value=500.0, step=50.0)
+
+    load_balance = st.checkbox(
+        "Enable Load Balancing (Md constraint)",
+        value=True,
+        help=(
+            "The Md constraint limits the number of routes per depot to the "
+            "number of vehicles available there. When enabled, customers are "
+            "reassigned from overloaded depots to underloaded ones."
+        )
+    )
+
+    start_hour = st.slider("Operation start hour", 4, 10, 8)
+    shift_end = st.slider("Shift end hour", 16, 24, 22, help="Time by which vehicles must return to depot.")
+    avg_speed = st.slider("Average speed (km/h)", 20, 80, 40)
+
+    max_dist = st.number_input(
+        "Maximum route distance (km)",
+        value=500.0,
+        step=50.0,
+        help=(
+            "Maximum total distance (km) a single vehicle can travel on one route. "
+            "Represents operational limits such as fuel range or driver shift duration. "
+            "Corresponds to constraint C4 in the MDVRP formulation."
+        )
+    )
 
     st.markdown("---")
     if isinstance(selected_vt, list):
@@ -79,37 +102,55 @@ with st.sidebar:
         - Vehicles available: {sum(vt.max_available for vt in selected_vt)}
         """)
     else:
+        # Arată alocarea per depozit pentru vehiculul selectat
+        alloc_lines = "\n".join(
+            f"  - {d.name.split('—')[-1].strip()}: "
+            f"**{d.fleet_allocation.get(selected_vt.id, 0)}** vehicles"
+            for d in st.session_state.depots
+        )
         st.info(f"""
         **Current configuration:**
         - {len(st.session_state.depots)} depots
         - {len(st.session_state.customers)} customers
-        - Vehicle capacity: {selected_vt.capacity} t
+        - Vehicle: {selected_vt.name}
+        - Capacity: {selected_vt.capacity} t
         - Fixed cost: {selected_vt.fixed_cost} €/day
         - Cost per km: {selected_vt.cost_per_km} €
+
+        **Fleet allocation per depot:**
+{alloc_lines}
         """)
 
     run_btn = st.button("▶ Run MDVRP", type="primary", width='stretch')
 
 # ── Solve ─────────────────────────────────────────────────────────────────────
 if run_btn:
+    warn_cw = []
+    warn_nn = []
+    ref_warnings = []
+
     with st.spinner("Computing optimal routes..."):
         t0 = time.time()
         if algo == "Both (comparison)":
-            routes_cw, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                        selected_vt, "clarke_wright", apply_2opt, max_dist, load_balance)
-            routes_nn, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                        selected_vt, "nearest_neighbor", apply_2opt, max_dist, load_balance)
+            routes_cw, _, warn_cw = solve_mdvrp(st.session_state.depots, st.session_state.customers,
+                                                 selected_vt, "clarke_wright", apply_2opt, 
+                                                 max_dist, load_balance, start_hour, avg_speed, shift_end)
+            routes_nn, _, warn_nn = solve_mdvrp(st.session_state.depots, st.session_state.customers,
+                                                 selected_vt, "nearest_neighbor", apply_2opt, 
+                                                 max_dist, load_balance, start_hour, avg_speed, shift_end)
             st.session_state.routes       = routes_cw
             st.session_state.routes_nn    = routes_nn
             st.session_state.compare_mode = True
         elif algo == "Clarke-Wright Savings":
-            routes, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                    selected_vt, "clarke_wright", apply_2opt, max_dist, load_balance)
+            routes, _, ref_warnings = solve_mdvrp(st.session_state.depots, st.session_state.customers,
+                                                   selected_vt, "clarke_wright", apply_2opt, 
+                                                   max_dist, load_balance, start_hour, avg_speed, shift_end)
             st.session_state.routes       = routes
             st.session_state.compare_mode = False
         else:
-            routes, _ = solve_mdvrp(st.session_state.depots, st.session_state.customers,
-                                    selected_vt, "nearest_neighbor", apply_2opt, max_dist, load_balance)
+            routes, _, ref_warnings = solve_mdvrp(st.session_state.depots, st.session_state.customers,
+                                                   selected_vt, "nearest_neighbor", apply_2opt, 
+                                                   max_dist, load_balance, start_hour, avg_speed, shift_end)
             st.session_state.routes       = routes
             st.session_state.compare_mode = False
 
@@ -117,30 +158,49 @@ if run_btn:
 
     st.success(f"✅ Optimization completed in {st.session_state.solve_time:.3f}s")
 
+    if algo == "Both (comparison)":
+        all_ref_warnings = warn_cw + warn_nn
+    else:
+        all_ref_warnings = ref_warnings
+
+    if all_ref_warnings:
+        st.warning("⚠️ **Refrigeration Assignment Issues Detected**")
+        for w in all_ref_warnings:
+            st.write(f"- {w}")
+        st.caption(
+            "A refrigerated customer was assigned to a non-refrigerated vehicle. "
+            "Consider enabling Load Balancing or selecting 'Mixed Fleet' mode."
+        )
+
 # ── Results ───────────────────────────────────────────────────────────────────
 if "routes" in st.session_state and st.session_state.routes:
     routes = st.session_state.routes
 
-    total_dist  = sum(r.total_distance for r in routes)
-    total_cost  = sum(r.total_cost for r in routes)
-    total_dem   = sum(r.total_demand  for r in routes)
-    total_cap   = sum(r.vehicle_type.capacity for r in routes)
-    avg_util    = (total_dem / total_cap * 100) if total_cap > 0 else 0
+    total_dist = sum(r.total_distance for r in routes)
+    total_cost = sum(r.total_cost     for r in routes)
+    total_dem  = sum(r.total_demand   for r in routes)
+    total_cap  = sum(r.vehicle_type.capacity for r in routes)
+    avg_util   = (total_dem / total_cap * 100) if total_cap > 0 else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("🛣️ Total distance",    f"{total_dist:.1f} km")
-    c2.metric("💰 Total cost",         f"{total_cost:.0f} €")
-    c3.metric("🚛 Routes",             len(routes))
-    c4.metric("📦 Demand served",      f"{total_dem:.1f} t")
-    c5.metric("📊 Avg utilization",    f"{avg_util:.1f}%")
+    st.markdown("""
+| Metric | Value | Description |
+|---|---|---|
+| 🛣️ Total distance | **{:.1f} km** | Total km driven by all vehicles |
+| 💰 Total cost | **{:.0f} €** | Fixed costs + variable routing costs |
+| 🚛 Routes | **{}** | Number of vehicles deployed |
+| 📦 Demand served | **{:.1f} t** | Total goods delivered |
+| 📊 Avg utilization | **{:.1f}%** | Average vehicle load vs capacity |
+""".format(total_dist, total_cost, len(routes), total_dem, avg_util))
 
-    # Verificare constrângere disponibilitate vehicule (M_d)
+    # Verificare constrângere M_d
     violations = []
     for depot in st.session_state.depots:
         depot_routes = [r for r in routes if r.depot.id == depot.id]
         if len(depot_routes) > depot.num_vehicles:
-            violations.append(f"**{depot.name}**: {len(depot_routes)} routes generated, but only {depot.num_vehicles} vehicles are available.")
-    
+            violations.append(
+                f"**{depot.name}**: {len(depot_routes)} routes generated, "
+                f"but only {depot.num_vehicles} vehicles are available."
+            )
     if violations:
         st.error("⚠️ **Resource Constraint Violation (M_d)**")
         for v in violations:
@@ -149,20 +209,45 @@ if "routes" in st.session_state and st.session_state.routes:
     st.markdown("---")
     tab_map, tab_table, tab_cmp = st.tabs(["🗺️ Route map", "📋 Route details", "📊 Algorithm comparison"])
 
+    # ── TAB 1: MAP ────────────────────────────────────────────────────────────
     with tab_map:
         st.subheader("Generated routes on map")
         m = build_map(st.session_state.depots, st.session_state.customers, routes)
         st_html(map_to_html(m), height=560, scrolling=False)
-        st.caption("💡 Click any route line or customer marker for details. Toggle layers from the top-right corner.")
+        st.caption(
+            "💡 Numbered circles show each route. "
+            "Small stop numbers on customer markers show the visit order within each route. "
+            "Arrows indicate direction of travel. Click any element for details."
+        )
 
+    # ── TAB 2: ROUTE DETAILS ──────────────────────────────────────────────────
     with tab_table:
         st.subheader("Route details")
+
+        # Trasee text — formatul academic
+        st.markdown("**Route sequences:**")
+
+        def clean_name(name: str) -> str:
+            import re
+            return re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name).strip()
+
+        for i, r in enumerate(routes):
+            stops = " → ".join(clean_name(c.name) for c in r.customers)
+            st.markdown(
+                f"**Route {i+1}** ({r.vehicle_type.name}): "
+                f"{r.depot.name} → {stops} → {r.depot.name}"
+            )
+        st.markdown("---")
+
+        # Tabel detalii
         rows = [{
             "Route":            f"Route {i+1}",
             "Depot":            r.depot.name,
             "Vehicle":          r.vehicle_type.name,
-            "Customers":        len(r.customers),
-            "Sequence":         " → ".join(c.name.split()[-1] for c in r.customers),
+            "Stops":            len(r.customers),
+            "Sequence":         r.depot.name + " → "
+                                + " → ".join(clean_name(c.name) for c in r.customers)
+                                + " → " + r.depot.name,
             "Demand (t)":       r.total_demand,
             "Capacity (t)":     r.vehicle_type.capacity,
             "Utilization (%)":  round(r.total_demand / r.vehicle_type.capacity * 100, 1),
@@ -173,23 +258,26 @@ if "routes" in st.session_state and st.session_state.routes:
         df = pd.DataFrame(rows)
 
         def color_util(val):
-            if val >= 80: return "background-color: #d4edda"
-            if val >= 50: return "background-color: #fff3cd"
-            return "background-color: #f8d7da"
+            if val >= 80: return "background-color: #2e7d32; color: white; font-weight: 600"
+            if val >= 50: return "background-color: #f57f17; color: white; font-weight: 600"
+            return "background-color: #c62828; color: white; font-weight: 600"
 
-        st.dataframe(df.style.map(color_util, subset=["Utilization (%)"]),
-                     width='stretch', hide_index=True)
+        st.dataframe(
+            df.style.map(color_util, subset=["Utilization (%)"]),
+            width='stretch', hide_index=True
+        )
 
         st.markdown("**Per-depot summary:**")
         summary = df.groupby("Depot").agg(
             Routes=("Route", "count"),
-            Customers=("Customers", "sum"),
+            Stops=("Stops", "sum"),
             Total_demand=("Demand (t)", "sum"),
             Total_distance=("Distance (km)", "sum"),
             Total_cost=("Cost (€)", "sum")
         ).reset_index()
         st.dataframe(summary, width='stretch', hide_index=True)
 
+    # ── TAB 3: COMPARISON ────────────────────────────────────────────────────
     with tab_cmp:
         if st.session_state.get("compare_mode"):
             routes_nn = st.session_state.routes_nn
@@ -198,21 +286,25 @@ if "routes" in st.session_state and st.session_state.routes:
             def summarize(rs, label):
                 cap_sum = sum(route.vehicle_type.capacity for route in rs)
                 return {
-                    "Algorithm": label,
-                    "Routes": len(rs),
-                    "Total distance (km)": round(sum(r.total_distance for r in rs), 1),
-                    "Total cost (€)": round(sum(r.total_cost for r in rs), 0),
-                    "Avg utilization (%)": round(
+                    "Algorithm":            label,
+                    "Routes":               len(rs),
+                    "Total distance (km)":  round(sum(r.total_distance for r in rs), 1),
+                    "Total cost (€)":       round(sum(r.total_cost for r in rs), 0),
+                    "Avg utilization (%)":  round(
                         sum(r.total_demand for r in rs) / cap_sum * 100, 1
                     ) if cap_sum > 0 else 0,
                 }
 
-            st.dataframe(pd.DataFrame([summarize(routes_nn, "Nearest Neighbor"),
-                                       summarize(routes_cw, "Clarke-Wright Savings")]),
-                         width='stretch', hide_index=True)
+            st.dataframe(
+                pd.DataFrame([
+                    summarize(routes_nn, "Nearest Neighbor"),
+                    summarize(routes_cw, "Clarke-Wright Savings")
+                ]),
+                width='stretch', hide_index=True
+            )
 
-            nn_dist = sum(r.total_distance for r in routes_nn)
-            cw_dist = sum(r.total_distance for r in routes_cw)
+            nn_dist    = sum(r.total_distance for r in routes_nn)
+            cw_dist    = sum(r.total_distance for r in routes_cw)
             improvement = (nn_dist - cw_dist) / nn_dist * 100 if nn_dist > 0 else 0
             if improvement > 0:
                 st.success(f"✅ Clarke-Wright is **{improvement:.1f}%** more efficient than Nearest Neighbor in total distance.")
@@ -220,10 +312,14 @@ if "routes" in st.session_state and st.session_state.routes:
                 st.info(f"ℹ️ On this instance, Nearest Neighbor achieved {abs(improvement):.1f}% less total distance.")
 
             st.subheader("Map — Clarke-Wright Savings")
-            st_html(map_to_html(build_map(st.session_state.depots, st.session_state.customers, routes_cw)), height=400, scrolling=False)
+            st_html(map_to_html(build_map(
+                st.session_state.depots, st.session_state.customers, routes_cw
+            )), height=400, scrolling=False)
 
             st.subheader("Map — Nearest Neighbor")
-            st_html(map_to_html(build_map(st.session_state.depots, st.session_state.customers, routes_nn)), height=400, scrolling=False)
+            st_html(map_to_html(build_map(
+                st.session_state.depots, st.session_state.customers, routes_nn
+            )), height=400, scrolling=False)
         else:
             st.info("Select **'Both (comparison)'** from the sidebar and re-run to see a side-by-side comparison.")
 

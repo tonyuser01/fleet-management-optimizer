@@ -6,10 +6,11 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from typing import Union, Optional
 
 from utils.data_models import VEHICLE_FLEET, DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST
 from utils.mdvrp_algorithms import get_transport_stats
-from utils.fsmvrp_optimizer import optimize_fleet, sensitivity_analysis, solve_fsmvrp_combined_savings
+from utils.fsmvrp_optimizer import optimize_fleet, sensitivity_analysis, solve_fsmvrp_multi_depot, FleetSolution
 from utils.map_utils import build_map, map_to_html
 from streamlit.components.v1 import html as st_html
 
@@ -19,67 +20,82 @@ st.markdown("Determine the optimal fleet composition to minimize total distribut
 with st.expander("📖 Theoretical Framework: Fleet Size and Mix VRP"):
     st.markdown(r"""
     ### 1. Introduction
-    The Fleet Size and Mix Vehicle Routing Problem (FSMVRP) represents a decision layer in distribution network optimization. Unlike the classical VRP which assumes a homogeneous fleet, the FSMVRP acknowledges that most logistics providers operate heterogeneous fleets comprising vehicles of different capacities, costs, and operational characteristics.
-    
-    The FSMVRP seeks to determine not only the optimal routes for serving customers but also the optimal composition of the fleet: how many vehicles of each type should be deployed to minimize total system cost. Determining the optimal fleet composition is a long-term decision, as distribution costs driven by fuel and asset maintenance constitute a significant portion of a firm's total expenditure.
+    The Fleet Size and Mix Vehicle Routing Problem (FSMVRP) represents a decision layer in
+    distribution network optimization. Unlike the classical VRP which assumes a homogeneous
+    fleet, the FSMVRP acknowledges that most logistics providers operate heterogeneous fleets
+    comprising vehicles of different capacities, costs, and operational characteristics.
 
     ### 2. Mathematical Formulation
-    The objective is to minimize total costs, consisting of fixed acquisition/leasing costs and vehicle-dependent operational costs:
     $$\min Z = \sum_{k=1}^{T}{F_k\left(\sum_{j=1}^{n}x_{0jk}\right)}+\sum_{k=1}^{T}\sum_{i=0}^{n}\sum_{j=0}^{n}c_{ijk}\, x_{ijk}$$
 
     **Cost Structure:**
-    - **Fixed costs ($F_k$):** Sum of acquisition costs for each vehicle type $k$ that leaves the depot (node 0).
-    - **Variable costs ($c_{ijk}$):** Operational cost of traversing arc $(i,j)$ with vehicle type $k$, proportional to distance and consumption rates.
+    - **Fixed costs ($F_k$):** Acquisition costs for each vehicle type $k$ that leaves the depot.
+    - **Variable costs ($c_{ijk}$):** Operational cost of traversing arc $(i,j)$ with vehicle $k$.
 
-    **Constraints:**
-    - **Customer Service:** Each customer $j$ must be visited exactly once:
-      $$\sum_{k=1}^{T}\sum_{i=0}^{n}x_{ijk}=1, \quad \forall j=1,\ldots,n$$
-    - **Flow Conservation:** Vehicle $k$ entering location $p$ must also depart:
-      $$\sum_{i=0}^{n}x_{ipk}-\sum_{j=0}^{n}x_{pjk}=0, \quad \forall k=1,\ldots,T; \ \forall p=1,\ldots,n$$
-    - **Vehicle Capacity:** Total demand served on a route must not exceed vehicle capacity $a_k$:
-      $$r_j \le \sum_{k=1}^{T}\sum_{i=0}^{n}a_k\, x_{ijk}, \quad \forall j=1,\ldots,n$$
-    - **Subtour Elimination:** Ensures all routes are linked to the central depot using commodity flow variables:
-      $$r_j-r_i \geq (d_j+a_T)\sum_{k=1}^{T}x_{ijk}-a_T, \quad \forall i=0,\ldots,n; \ \forall j=1,\ldots,n$$
-    - **Fleet Availability:**
-      $$x_{ij}^k \in \{0, 1\}, \quad \sum_{j=1}^{n}x_{0jk} \le m_k, \quad \forall k \in K$$
-
-    ### 3. Solution Methodology: Combined Savings (CS)
-    Traditional routing algorithms, such as the Clarke and Wright (CW) savings technique, are often deficient for the FSMVRP because they focus solely on distance. Standard CW tends to merge routes until the capacity of the largest vehicle is reached, even if it is not cost-effective.
-
-    To solve this, the **Combined Savings (CS)** approach integrates vehicle costs into the logic:
+    ### 3. Combined Savings (CS) Approach
     $$S_{ij}=s_{ij}+F(Z_i)+F(Z_j)-F(Z_i+Z_j)$$
-    Where $F(Z)$ is the cost of the smallest vehicle type capable of serving demand $Z$.
+    Where $F(Z)$ is the fixed cost of the smallest vehicle capable of serving demand $Z$.
 
-    ### 4. Optimization Objectives Explained
-    - **Minimize Total Cost**: The model searches for the fleet composition that achieves the lowest aggregate cost (Fixed Costs + Variable Costs). This is the standard "profit-maximization" strategy.
-    - **Minimize Vehicles**: Focuses on asset reduction. It aims for the absolute lowest vehicle count required to cover demand. This is vital when driver availability or physical terminal space is the primary constraint.
-    - **Balanced Utilization (Mixed Fleet)**: Targets an ideal load factor of approximately 85%. This strategy provides an operational safety buffer for demand fluctuations while avoiding the inefficiencies of under-utilization.
-    
-    ---
-    *Note: Research also indicates that energy consumption in these models is highly load-dependent.*
+    ### 4. Optimization Objectives
+    - **Minimize Total Cost**: Lowest aggregate cost (Fixed + Variable).
+    - **Minimize Vehicles**: Absolute lowest vehicle count — useful when driver availability is the constraint.
+    - **Balanced Utilization**: Targets ~85% load factor — operational safety buffer.
     """)
 
+# ── Session state ─────────────────────────────────────────────────────────────
 if "vehicle_types" not in st.session_state:
     st.session_state.vehicle_types = VEHICLE_FLEET.copy()
+if "depots" not in st.session_state:
+    st.session_state.depots = DEPOTS_BUCHAREST.copy()
+if "customers" not in st.session_state:
+    st.session_state.customers = CUSTOMERS_BUCHAREST.copy()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ FSMVRP Parameters")
-    total_demand = st.slider("Total demand to deliver (t)", 10.0, 120.0, 45.0, 2.5)
-    total_km     = st.slider("Estimated total distance (km)", 50, 800, 320, 10)
+    if "customers" in st.session_state and st.session_state.customers:
+        auto_demand = round(sum(c.demand for c in st.session_state.customers), 1)
+    else:
+        auto_demand = 45.0
+
+    total_demand = st.number_input(
+        "Total demand to deliver (t)",
+        value=float(auto_demand),
+        step=0.5,
+        help=f"Auto-calculated from active customers: {auto_demand} t. You can override manually."
+    )
+
+    # Calculează automat distanța estimată din datele rețelei
+    if "customers" in st.session_state and "depots" in st.session_state and st.session_state.customers:
+        from utils.data_models import haversine
+        auto_km = sum(
+            min(haversine(c.lat, c.lon, d.lat, d.lon) for d in st.session_state.depots) * 2
+            for c in st.session_state.customers
+        )
+        auto_km = round(auto_km, 0)
+    else:
+        auto_km = 320.0
+
+    total_km = st.number_input(
+        "Estimated total distance (km)",
+        value=float(auto_km),
+        step=10.0,
+        help=f"Auto-calculated from network data: {auto_km:.0f} km (depot→customer×2 for all active customers). You can override manually."
+    )
     objective = st.selectbox(
-        "Optimization objective", 
-        ["min_cost", "min_vehicles", "balanced"], 
+        "Optimization objective",
+        ["min_cost", "min_vehicles", "balanced"],
         format_func=lambda x: {
             "min_cost":     "Minimize total cost",
             "min_vehicles": "Minimize number of vehicles",
             "balanced":     "Balanced fleet utilization"
         }[x],
-        help="Choose the strategic priority for fleet composition. 'Balanced' targets ~85% average utilization."
+        help="Choose the strategic priority for fleet composition. 'Balanced' targets ~85% utilization."
     )
     max_veh  = st.slider("Maximum vehicles allowed", 3, 20, 12)
     run_btn  = st.button("▶ Optimize fleet", type="primary", width='stretch')
 
+# ── Run optimization ──────────────────────────────────────────────────────────
 if run_btn:
     with st.spinner("Computing optimal fleet configuration..."):
         best, top20 = optimize_fleet(
@@ -88,9 +104,8 @@ if run_btn:
         )
         sens = sensitivity_analysis(st.session_state.vehicle_types, total_demand, total_km)
 
-        # Generate operational routes using Combined Savings if data is available
         if "customers" in st.session_state and st.session_state.customers:
-            st.session_state.cs_routes = solve_fsmvrp_combined_savings(
+            st.session_state.cs_routes = solve_fsmvrp_multi_depot(
                 st.session_state.depots, st.session_state.customers, st.session_state.vehicle_types
             )
 
@@ -98,22 +113,24 @@ if run_btn:
     st.session_state.fsm_top20 = top20
     st.session_state.fsm_sens  = sens
 
-best = st.session_state.get("fsm_best")
+# ── Results ───────────────────────────────────────────────────────────────────
+best: Optional[FleetSolution] = st.session_state.get("fsm_best")
+
 if best is not None:
     top20 = st.session_state.fsm_top20
     sens  = st.session_state.fsm_sens
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("💰 Total cost",       f"{best.total_cost:.0f} €")
-    c2.metric("💶 Fixed cost",       f"{best.fixed_cost:.0f} €")
-    c3.metric("🛣️ Variable cost",   f"{best.variable_cost:.0f} €")
-    c4.metric("🚛 Vehicles used",    best.total_vehicles)
+    c1.metric("💰 Total cost",        f"{best.total_cost:.0f} EUR")
+    c2.metric("💶 Fixed cost",        f"{best.fixed_cost:.0f} EUR")
+    c3.metric("🛣️ Variable cost",    f"{best.variable_cost:.0f} EUR")
+    c4.metric("🚛 Vehicles used",     best.total_vehicles)
     c5.metric("📊 Fleet utilization", f"{best.utilization:.1f}%")
 
     c1b, c2b, c3b = st.columns(3)
-    c1b.metric("📦 Capacity covered",  f"{best.total_capacity:.1f} t")
-    c2b.metric("💸 Cost per tonne",    f"{best.cost_per_ton:.2f} €/t")
-    c3b.metric("💡 Surplus capacity",  f"{best.total_capacity - total_demand:.1f} t")
+    c1b.metric("📦 Capacity covered", f"{best.total_capacity:.1f} t")
+    c2b.metric("💸 Cost per tonne",   f"{best.cost_per_ton:.2f} EUR/t")
+    c3b.metric("💡 Surplus capacity", f"{best.total_capacity - total_demand:.1f} t")
 
     st.markdown("---")
     t_summary, t1, t2, t3, t4, t5 = st.tabs([
@@ -125,40 +142,35 @@ if best is not None:
         "🗺️ CS Routing Results"
     ])
 
+    # ── Executive Summary ─────────────────────────────────────────────────────
     with t_summary:
         st.subheader("Key Performance Indicators (KPIs)")
-        
-        # Calculăm metrici comparative dacă avem rutele CS
+
         cs_routes = st.session_state.get("cs_routes")
         cs_total_cost = sum(r.total_cost for r in cs_routes) if cs_routes else None
-        
+
         k1, k2, k3 = st.columns(3)
-        
         with k1:
             st.markdown("### 💰 Economic Efficiency")
-            st.write(f"**Total Estimated Cost:** {best.total_cost:.0f} €")
-            st.write(f"**Transport Cost / Ton:** {best.cost_per_ton:.2f} €/t")
+            st.write(f"**Total Estimated Cost:** {best.total_cost:.0f} EUR")
+            st.write(f"**Transport Cost / Ton:** {best.cost_per_ton:.2f} EUR/t")
             if cs_total_cost:
                 gap = ((cs_total_cost - best.total_cost) / best.total_cost) * 100
                 st.write(f"**Operational Gap:** {gap:+.1f}%")
                 st.caption("Difference between theoretical fleet cost and actual routing.")
-
         with k2:
             st.markdown("### 🚛 Fleet Utilization")
             st.write(f"**Capacity Fill Rate:** {best.utilization:.1f}%")
             st.write(f"**Total Capacity:** {best.total_capacity:.1f} t")
-            st.progress(best.utilization / 100)
-            
+            st.progress(min(best.utilization / 100, 1.0))
         with k3:
             st.markdown("### ⚙️ Resource Allocation")
             st.write(f"**Total Vehicles:** {best.total_vehicles}")
             fixed_ratio = (best.fixed_cost / best.total_cost) * 100
             st.write(f"**Fixed Cost Ratio:** {fixed_ratio:.1f}%")
-            
+
         st.markdown("---")
         st.markdown("#### 📦 Fleet Inventory Status")
-        st.caption("Usage vs. Availability defined in Map & Data configuration.")
-        
         inventory_data = []
         for vt in st.session_state.vehicle_types:
             used = best.allocation.get(vt.id, 0)
@@ -169,34 +181,38 @@ if best is not None:
                 "Remaining": vt.max_available - used,
                 "Utilization": f"{(used/vt.max_available*100):.0f}%" if vt.max_available > 0 else "0%"
             })
-        
         st.table(pd.DataFrame(inventory_data))
 
         st.markdown("---")
         st.markdown("#### Strategic Recommendation")
-        
         if best.utilization > 90:
-            st.warning("⚠️ **High Utilization:** Your fleet is operating near maximum capacity. Any increase in demand will require additional vehicles or outsourced transport.")
+            st.warning("⚠️ **High Utilization:** Fleet near maximum capacity. Any demand increase requires additional vehicles.")
         elif best.utilization < 70:
-            st.info("ℹ️ **Underutilized Fleet:** You have significant spare capacity. Consider using smaller vehicle types or increasing consolidate deliveries.")
+            st.info("ℹ️ **Underutilized Fleet:** Significant spare capacity. Consider smaller vehicle types or consolidated deliveries.")
         else:
-            st.success("✅ **Balanced Fleet:** Current configuration provides a good safety margin while maintaining cost-efficiency.")
-            
+            st.success("✅ **Balanced Fleet:** Good safety margin while maintaining cost-efficiency.")
+
         if cs_routes:
             st.markdown("---")
             st.markdown("#### 📊 Transport & Traffic Parameters (Operational)")
             t_stats = get_transport_stats(cs_routes)
-            
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Traffic Flow", f"{t_stats['traffic_flow']:.1f} km/day", help="Ftrafic = Σ (ni * di)")
-            m2.metric("Transport Flow", f"{t_stats['transport_flow']:.1f} veh-inc*km", help="Ftransport = Σ (ni * (di - di'))")
-            m3.metric("Empty Run %", f"{t_stats['empty_pct']:.1f} %", help="Pgol = (Pdg / Ptotal) * 100")
-            m4.metric("Daily Performance", f"{t_stats['performance']:.1f} t*km", help="Pperformance = Σ (qi * di)")
-            st.caption("Parameters are calculated based on operational routes generated via Combined Savings.")
+            st.markdown("""
+| Parameter | Value | Description |
+|---|---|---|
+| 🛣️ Traffic Flow | **{:.1f} km/day** | Total km driven by all vehicles (loaded + empty) |
+| 🚛 Transport Flow | **{:.1f} veh·km/day** | Km driven while carrying goods (excludes empty returns) |
+| 🔄 Empty Run % | **{:.1f} %** | Share of total distance driven empty (return trips) |
+| 📦 Daily Performance | **{:.1f} t·km/day** | Σ(load × distance) — measures total transport work |
+""".format(
+                t_stats['traffic_flow'],
+                t_stats['transport_flow'],
+                t_stats['empty_pct'],
+                t_stats['performance']
+            ))
+            st.caption("Parameters calculated from Combined Savings operational routes.")
+            st.markdown(f"Operational routing confirmed **{len(cs_routes)} routes** needed with current fleet mix.")
 
-        if cs_routes:
-            st.markdown(f"Operational routing has confirmed that **{len(cs_routes)} routes** are needed to serve the demand with the current fleet mix.")
-
+    # ── Optimal configuration ─────────────────────────────────────────────────
     with t1:
         st.subheader("Optimal fleet configuration")
         rows = best.to_dict()
@@ -204,9 +220,9 @@ if best is not None:
             st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         fig_pie = go.Figure(data=[go.Pie(
-                labels=["Fixed cost", "Variable cost"],
-                values=[round(best.fixed_cost), round(best.variable_cost)],
-                hole=0.45, marker_colors=["#E94560", "#3B8BD4"]
+            labels=["Fixed cost", "Variable cost"],
+            values=[round(best.fixed_cost), round(best.variable_cost)],
+            hole=0.45, marker_colors=["#E94560", "#3B8BD4"]
         )])
         fig_pie.update_layout(title="Total cost breakdown", height=280,
                                margin=dict(t=40, b=20, l=20, r=20))
@@ -216,16 +232,17 @@ if best is not None:
                  for vt in st.session_state.vehicle_types if best.allocation.get(vt.id, 0) > 0}
         fig_bar = go.Figure(data=[go.Bar(
             x=list(alloc.keys()), y=list(alloc.values()),
-            marker_color=["#E94560","#3B8BD4","#1D9E75","#BA7517"],
+            marker_color=["#E94560", "#3B8BD4", "#1D9E75", "#BA7517"],
             text=list(alloc.values()), textposition="outside"
         )])
         fig_bar.update_layout(title="Vehicles Used by Type", yaxis_title="Count",
                                height=260, margin=dict(t=40, b=20, l=20, r=20))
         st.plotly_chart(fig_bar, use_container_width=True)
 
+    # ── Solution comparison ───────────────────────────────────────────────────
     with t2:
         st.subheader("Top 10 feasible solutions")
-        if top20:
+        if top20 and not isinstance(top20[0], str):
             rows_top = []
             for i, sol in enumerate(top20[:10]):
                 alloc_str = ", ".join(
@@ -237,15 +254,25 @@ if best is not None:
                     "Vehicles": sol.total_vehicles,
                     "Capacity (t)": round(sol.total_capacity, 1),
                     "Utilization (%)": round(sol.utilization, 1),
-                    "Fixed cost (€)": round(sol.fixed_cost, 0),
-                    "Variable cost (€)": round(sol.variable_cost, 0),
-                    "Total cost (€)": round(sol.total_cost, 0),
+                    "Fixed cost (EUR)": round(sol.fixed_cost, 0),
+                    "Variable cost (EUR)": round(sol.variable_cost, 0),
+                    "Total cost (EUR)": round(sol.total_cost, 0),
                 })
             df_top = pd.DataFrame(rows_top)
-            st.dataframe(df_top, width='stretch', hide_index=True)
 
+            def highlight_best(row):
+                if row["Rank"] == 1:
+                    return ["background-color: #1b5e20; color: white; font-weight: bold"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(
+                df_top.style.apply(highlight_best, axis=1),
+                width='stretch',
+                hide_index=True
+            )
+            st.caption("🥇 Row 1 (green) = optimal solution for the selected objective. Remaining rows are alternative feasible configurations ranked by total cost.")
             fig_sc = px.scatter(
-                df_top, x="Vehicles", y="Total cost (€)",
+                df_top, x="Vehicles", y="Total cost (EUR)",
                 size="Utilization (%)", color="Utilization (%)",
                 hover_data=["Configuration"],
                 color_continuous_scale="RdYlGn",
@@ -254,21 +281,36 @@ if best is not None:
             )
             st.plotly_chart(fig_sc, use_container_width=True)
 
+    # ── Sensitivity analysis ──────────────────────────────────────────────────
     with t3:
         st.subheader("Sensitivity analysis — demand variation")
-        st.caption("Optimal fleet cost at different demand levels (50% – 150% of base demand).")
+        st.markdown("""
+This analysis shows how the **optimal fleet cost and composition** change when total demand 
+varies between **50% and 150%** of the current base demand. It answers the question:
+*"What happens to our distribution costs if demand increases or decreases?"*
+
+**How to read the charts:**
+- **Cost curve (red)** — total daily cost (fixed + variable) at each demand level. 
+  A steep increase signals a point where a new vehicle must be added to the fleet.
+- **Cost/tonne curve (dashed blue)** — economic efficiency. Lower = more cost-efficient. 
+  Drops when a larger vehicle replaces multiple smaller ones.
+- **Vehicle count chart** — step increases show exactly when an additional vehicle becomes necessary.
+
+**Insight:** The cost curve is not linear — it increases in **steps** each time a new 
+vehicle type threshold is crossed. This is the fixed cost effect ($F_k$) from the FSMVRP formulation.
+""")
         if sens:
             df_s = pd.DataFrame(sens)
             fig_s = go.Figure()
             fig_s.add_trace(go.Scatter(x=df_s["demand_t"], y=df_s["total_cost"],
-                mode="lines+markers", name="Total cost (€)",
+                mode="lines+markers", name="Total cost (EUR)",
                 line=dict(color="#E94560", width=2), marker=dict(size=7)))
             fig_s.add_trace(go.Scatter(x=df_s["demand_t"], y=df_s["cost_per_ton"],
-                mode="lines+markers", name="Cost/tonne (€/t)", yaxis="y2",
+                mode="lines+markers", name="Cost/tonne (EUR/t)", yaxis="y2",
                 line=dict(color="#3B8BD4", width=2, dash="dash"), marker=dict(size=7)))
             fig_s.update_layout(
-                xaxis_title="Total demand (t)", yaxis_title="Total cost (€)",
-                yaxis2=dict(title="Cost per tonne (€/t)", overlaying="y", side="right"),
+                xaxis_title="Total demand (t)", yaxis_title="Total cost (EUR)",
+                yaxis2=dict(title="Cost per tonne (EUR/t)", overlaying="y", side="right"),
                 height=320, margin=dict(t=30, b=40, l=60, r=60))
             st.plotly_chart(fig_s, use_container_width=True)
 
@@ -277,6 +319,22 @@ if best is not None:
                 labels={"demand_t": "Demand (t)", "total_vehicles": "Vehicles"}, height=260)
             st.plotly_chart(fig_v, use_container_width=True)
 
+            min_cost_row = df_s.loc[df_s["total_cost"].idxmin()]
+            max_cost_row = df_s.loc[df_s["total_cost"].idxmax()]
+            min_cpt_row  = df_s.loc[df_s["cost_per_ton"].idxmin()]
+
+            st.markdown("---")
+            st.markdown("#### 📌 Automatic Conclusions")
+            st.markdown(f"""
+- **Lowest cost scenario:** {min_cost_row['demand_t']:.1f} t demand → **{min_cost_row['total_cost']:.0f} EUR/day**
+- **Highest cost scenario:** {max_cost_row['demand_t']:.1f} t demand → **{max_cost_row['total_cost']:.0f} EUR/day**
+- **Most cost-efficient point:** {min_cpt_row['demand_t']:.1f} t demand → **{min_cpt_row['cost_per_ton']:.2f} EUR/t** 
+  *(fleet is best utilized at this demand level)*
+- **Cost increase from min to max demand:** **{((max_cost_row['total_cost'] - min_cost_row['total_cost']) / min_cost_row['total_cost'] * 100):.1f}%**
+- **Vehicle range:** {df_s['total_vehicles'].min()} – {df_s['total_vehicles'].max()} vehicles across the demand spectrum
+            """)
+
+    # ── Mathematical model ────────────────────────────────────────────────────
     with t4:
         st.subheader("FSMVRP mathematical formulation")
         st.markdown(r"""
@@ -285,52 +343,59 @@ $$\min \sum_{t \in T} f_t \cdot n_t + \sum_{k \in K} \sum_{(i,j) \in A} c_{ij} \
 
 **Constraints:**
 
-1. **Demand coverage:**
-$$\sum_{t \in T} n_t \cdot Q_t \geq D_{\text{total}}$$
+1. **Demand coverage:** $\sum_{t \in T} n_t \cdot Q_t \geq D_{\text{total}}$
+2. **Vehicle availability:** $n_t \leq N_t^{\max} \quad \forall t \in T$
+3. **Maximum fleet size:** $\sum_{t \in T} n_t \leq K^{\max}$
+4. **Integrality:** $n_t \in \mathbb{Z}_{\geq 0} \quad \forall t \in T$
+        """)
+        n_types   = len(st.session_state.vehicle_types)
+        opt_cost  = f"{best.total_cost:.0f}"
+        opt_veh   = best.total_vehicles
 
-2. **Vehicle availability:**
-$$n_t \leq N_t^{\max} \quad \forall t \in T$$
+        st.markdown(
+            "| Parameter | Value |\n"
+            "|---|---|\n"
+            f"| |T| — vehicle types | {n_types} |\n"
+            f"| D_total — total demand | {total_demand} t |\n"
+            f"| K_max — max vehicles | {max_veh} |\n"
+            f"| Optimal total cost | {opt_cost} EUR |\n"
+            f"| Optimal vehicles used | {opt_veh} |\n"
+        )
 
-3. **Maximum fleet size:**
-$$\sum_{t \in T} n_t \leq K^{\max}$$
-
-4. **Integrality:**
-$$n_t \in \mathbb{Z}_{\geq 0} \quad \forall t \in T$$
-
-**Notation:** $f_t$ = daily fixed cost, $n_t$ = vehicles used (decision variable),
-$Q_t$ = vehicle capacity, $c_{ij}$ = arc cost, $x_{ijk}$ = binary routing variable.
-            """)
-        if best is not None:
-            st.dataframe(pd.DataFrame([
-                {"Parameter": "|T| — vehicle types",   "Value": len(st.session_state.vehicle_types)},
-                {"Parameter": "D_total — demand (t)",   "Value": f"{total_demand} t"},
-                {"Parameter": "K_max — max vehicles",   "Value": max_veh},
-                {"Parameter": "Optimal total cost",     "Value": f"{best.total_cost:.0f} €"},
-                {"Parameter": "Optimal vehicles used",  "Value": best.total_vehicles},
-            ]), width='stretch', hide_index=True)
-
-    with t5: # New Tab
+    # ── CS Routing Results ────────────────────────────────────────────────────
+    with t5:
         st.subheader("Combined Savings Operational Routes")
+        cs_routes = st.session_state.get("cs_routes")
         if cs_routes:
-            st.write(f"The algorithm generated **{len(cs_routes)} routes** using an optimal vehicle mix.")
-            
-            # Vizualizare hartă
+            st.write(f"Algorithm generated **{len(cs_routes)} routes** using optimal vehicle mix.")
             m_cs = build_map(DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, cs_routes)
             st_html(map_to_html(m_cs), height=400)
-            
-            # Tabel detalii
             cs_data = [{
                 "Route": f"R{i+1}",
+                "Depot": r.depot.name,
                 "Vehicle": r.vehicle_type.name,
-                "Capacity": r.vehicle_type.capacity,
-                "Load": r.total_demand,
+                "Capacity (t)": r.vehicle_type.capacity,
+                "Load (t)": r.total_demand,
                 "Dist (km)": r.total_distance,
-                "Cost (€)": r.total_cost
+                "Cost (EUR)": r.total_cost
             } for i, r in enumerate(cs_routes)]
             st.dataframe(pd.DataFrame(cs_data), width='stretch', hide_index=True)
+        else:
+            st.info("Run optimization first to generate CS routes.")
+
+# ── No result states ──────────────────────────────────────────────────────────
 elif "fsm_best" in st.session_state:
-    st.error("🚫 No feasible fleet configuration found.")
-    st.info("Try increasing the **Maximum vehicles allowed** or reducing the **Total demand** in the sidebar.")
+    top20 = st.session_state.get("fsm_top20", [])
+    if isinstance(top20, list) and top20 and isinstance(top20[0], str) and top20[0] == "__COMBINATORIAL_EXPLOSION__":
+        st.error("⚠️ **Combinatorial explosion detected.**")
+        st.warning(
+            "The current fleet configuration generates too many combinations (> 50,000). "
+            "Reduce **Maximum vehicles allowed** or decrease `max_available` in Map & Data."
+        )
+        st.info("Current fleet limits (6+5+3+2) generate at most 7×6×4×3 = 504 combinations — well within limits.")
+    else:
+        st.error("🚫 No feasible fleet configuration found.")
+        st.info("Try increasing **Maximum vehicles allowed** or reducing **Total demand**.")
 else:
     st.info("👈 Set parameters in the sidebar and click **'Optimize fleet'**.")
     st.markdown("""
