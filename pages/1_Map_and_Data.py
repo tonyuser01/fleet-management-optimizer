@@ -40,7 +40,8 @@ if "active_customer_ids" not in st.session_state:
     st.session_state.active_customer_ids = {c.id for c in st.session_state.all_customers}
 
 # Sincronizează num_vehicles per depot bazat pe flota totală disponibilă
-if "vehicle_types" in st.session_state and "depots" in st.session_state:
+# Sugestie: Rulează această logică doar dacă nu a fost deja configurată manual
+if "fleet_initialized" not in st.session_state:
     total_vehicles = sum(vt.max_available for vt in st.session_state.vehicle_types)
     num_depots = len(st.session_state.depots)
     if num_depots > 0:
@@ -48,6 +49,7 @@ if "vehicle_types" in st.session_state and "depots" in st.session_state:
         remainder = total_vehicles % num_depots
         for i, depot in enumerate(st.session_state.depots):
             depot.num_vehicles = vehicles_per_depot + (1 if i < remainder else 0)
+    st.session_state.fleet_initialized = True
 
 # ── Callbacks ────────────────────────────────────────────────────────────────
 def on_store_edit():
@@ -66,16 +68,23 @@ def on_store_edit():
 with st.sidebar:
     st.header("⚙️ Configuration")
     max_demand = st.slider("Max demand per customer (t)", 1.0, 10.0, 8.0, 0.5)
-    st.session_state.customers = [
-        c for c in st.session_state.all_customers
-        if c.id in st.session_state.active_customer_ids
-        and c.demand <= max_demand
-    ]
-    st.info(f"Active customers: **{len(st.session_state.customers)}**")
 
     st.markdown("---")
     st.subheader("🪵 Europallet parameters")
     pallet_payload = st.slider("Net payload per pallet (kg)", 200, 1200, 800, 50)
+
+# Asigură că clienții noi adăugați sunt incluși în active_customer_ids
+for c in st.session_state.all_customers:
+    if c.id not in st.session_state.active_customer_ids:
+        st.session_state.active_customer_ids.add(c.id)
+
+# Recalculează lista activă
+st.session_state.customers = [
+    c for c in st.session_state.all_customers
+    if c.id in st.session_state.active_customer_ids
+    and c.demand <= max_demand
+]
+st.sidebar.info(f"Active customers: **{len(st.session_state.customers)}**")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tabs = st.tabs([
@@ -249,20 +258,6 @@ with tabs[2]:
         }
     )
 
-    # Sincronizează active_customer_ids din tabel
-    edited_active = {
-        row["ID"]
-        for row in edited_store_data
-        if row["Active"]
-    }
-    st.session_state.active_customer_ids = edited_active
-
-    # Actualizează lista de clienți activi pentru restul aplicației
-    st.session_state.customers = [
-        c for c in st.session_state.all_customers
-        if c.id in st.session_state.active_customer_ids
-        and c.demand <= max_demand
-    ]
     
     col1, col2 = st.columns(2)
     demands = [float(cast(Any, c.demand)) for c in st.session_state.customers]
@@ -291,10 +286,11 @@ with tabs[2]:
             url = "https://nominatim.openstreetmap.org/search"
             params = {"q": address, "format": "json", "limit": 1}
             headers = {"User-Agent": "FleetManagementApp/1.0"}
-            resp = requests.get(url, params=params, headers=headers, timeout=5)
-            data = resp.json()
-            if data:
-                return float(data[0]["lat"]), float(data[0]["lon"])
+            with requests.get(url, params=params, headers=headers, timeout=5) as resp:
+                resp.raise_for_status()
+                data = resp.json()
+                if data:
+                    return float(data[0]["lat"]), float(data[0]["lon"])
         except Exception:
             pass
         return None, None
@@ -432,8 +428,8 @@ with tabs[3]:
                "Weight capacity = payload ÷ (net payload per pallet + pallet weight).")
 
     st.markdown("---")
-    st.subheader("📑 Technical Fleet Justification")
-    st.info("Technical details and certified specifications for each vehicle type used in the model.")
+    st.subheader("📑 Technical Fleet Details")
+    st.info("Technical details and specifications for each vehicle type used in the model.")
 
     for vt in st.session_state.vehicle_types:
         with st.expander(f"🔍 Detailed Specifications: {vt.name}"):

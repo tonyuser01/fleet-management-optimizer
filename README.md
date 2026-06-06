@@ -155,10 +155,7 @@ $$\text{depot}(i) = \arg\min_{d \in D} \; \text{Haversine}(d, i)$$
 - Multi-trip reload logic for routes exceeding vehicle capacity
 
 ### Module 6 — Conclusions & Results
-- Automatic simulation of all algorithms on current network
-- Explicit answers to all 5 Research Questions with real data
-- Algorithm performance comparison with Clarke-Wright Efficiency Index
-- The three core distribution decisions answered quantitatively
+- Summary of practical vs. theoretical optimization benefits
 
 ---
 

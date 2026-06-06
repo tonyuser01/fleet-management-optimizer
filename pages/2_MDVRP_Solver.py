@@ -229,7 +229,12 @@ if "routes" in st.session_state and st.session_state.routes:
 
         def clean_name(name: str) -> str:
             import re
-            return re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name).strip()
+            # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
+            name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
+            name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
+            # Scoate orice alt sufix (P1), (P2) rămas
+            name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
+            return name.strip()
 
         for i, r in enumerate(routes):
             stops = " → ".join(clean_name(c.name) for c in r.customers)
@@ -248,11 +253,11 @@ if "routes" in st.session_state and st.session_state.routes:
             "Sequence":         r.depot.name + " → "
                                 + " → ".join(clean_name(c.name) for c in r.customers)
                                 + " → " + r.depot.name,
-            "Demand (t)":       r.total_demand,
-            "Capacity (t)":     r.vehicle_type.capacity,
+            "Demand (t)":       f"{r.total_demand:.2f} t ({r.total_demand * 1000:.0f} kg)",
+            "Capacity (t)":     f"{r.vehicle_type.capacity:.1f} t",
             "Utilization (%)":  round(r.total_demand / r.vehicle_type.capacity * 100, 1),
-            "Distance (km)":    r.total_distance,
-            "Cost (€)":         r.total_cost,
+            "Distance (km)":    f"{r.total_distance:.2f} km",
+            "Cost (€)":         f"{r.total_cost:.2f} €",
         } for i, r in enumerate(routes)]
 
         df = pd.DataFrame(rows)

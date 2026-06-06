@@ -1,6 +1,11 @@
-venv/
-.venv/
 __pycache__/
-*.pyc
-.streamlit/config.toml
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
 .env
+.DS_Store
+.streamlit/config.toml
+.streamlit/credentials.toml
+*.log

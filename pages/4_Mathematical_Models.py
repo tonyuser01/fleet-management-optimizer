@@ -22,7 +22,7 @@ with tab1:
     st.markdown("""
     ### What problem does MDVRP solve?
 
-    A general merchandise distributor operates **multiple warehouses (depots)** spread across 
+    A distributor operates **multiple warehouses (depots)** spread across 
     a city or region. Each depot has a limited fleet of vehicles and must serve a set of 
     customers (stores) in its area. The central question is:
 
@@ -36,11 +36,11 @@ with tab1:
     - What is the minimum total distance and cost?
 
     **Why is it useful?**
-    For a distributor like Kaufland Romania operating 3 distribution centers in Bucharest, 
-    the MDVRP directly reduces fuel costs, driver hours, and vehicle wear by finding 
-    efficient multi-stop routes instead of individual depot-to-customer trips.
+    For a distributor operating multiple distribution centers, the MDVRP directly reduces 
+    fuel costs, driver hours, and vehicle wear by finding efficient multi-stop routes 
+    instead of individual depot-to-customer trips.
 
-    **Real-world impact:** Compared to naive routing (one vehicle per customer), 
+    **Impact:** Compared to naive routing (one vehicle per customer), 
     Clarke-Wright Savings typically achieves **15–30% distance reduction**.
     """)
     st.markdown("---")

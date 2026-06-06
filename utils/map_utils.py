@@ -25,7 +25,12 @@ ROUTE_COLORS = [
 
 def clean_name(name: str) -> str:
     """Removes virtual suffixes like (📦 P1) or (❄️ P2)."""
-    return re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name).strip()
+    # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
+    name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
+    name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
+    # Scoate orice alt sufix (P1), (P2) rămas
+    name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
+    return name.strip()
 
 
 def build_map(

@@ -33,20 +33,20 @@ st.markdown(
 st.markdown("### Welcome to the Fleet Management Optimization Application")
 st.markdown(
     "This application implements advanced mathematical models for fleet management of a general "
-    "merchandise distributor, featuring real-map visualization and multi-algorithm comparison."
+    "merchandise distributor, featuring map visualization and multi-algorithm comparison."
 )
 
 st.markdown("---")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.info("**📍 MDVRP**\n\nMulti-Depot Vehicle Routing Problem — route optimization across multiple depots")
+    st.info("**📍 MDVRP**\n\nRoute optimization across multiple depots")
 with col2:
-    st.info("**🚛 FSMVRP**\n\nFleet Size & Mix — optimal vehicle type selection for minimum cost")
+    st.info("**🚛 FSMVRP**\n\nOptimal vehicle type selection for minimum cost")
 with col3:
-    st.info("**🗺️ Interactive Map**\n\nReal-map visualization on OpenStreetMap with animated routes")
+    st.info("**🗺️ Map**\n\nOpenStreetMap visualization and Route Timeline")
 with col4:
-    st.info("**📊 Algorithm Comparison**\n\nNearest Neighbor vs Clarke-Wright Savings vs 2-opt improvement")
+    st.info("**📊 Conclusions**\n\nResearch answers, route timeline, and integrated model results")
 
 st.markdown("---")
 st.markdown("### Navigation")
@@ -58,6 +58,7 @@ Use the left sidebar to access the application modules:
 - **🚛 FSMVRP Optimizer** — Optimize fleet composition with sensitivity analysis
 - **🕐 Route Timeline** — Step-by-step delivery schedule and pallet tracking
 - **📖 Mathematical Models** — Full mathematical documentation with formulas
+- **📊 Conclusions & Results** — Research answers and final conclusions
 """)
 
 st.markdown("---")

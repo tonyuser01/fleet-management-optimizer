@@ -17,6 +17,18 @@ customers     = st.session_state.get("customers",     CUSTOMERS_BUCHAREST)
 vehicle_types = st.session_state.get("vehicle_types", VEHICLE_FLEET)
 total_demand  = sum(c.demand for c in customers)
 
+st.markdown("---")
+st.subheader("Research Framework")
+st.markdown("""
+This study is guided by the following research questions:
+
+1. **What are the main deficiencies in current fleet management practices within the distribution sector, and how do they impact operational performance and costs?**
+2. **How can mathematical models be applied to address these deficiencies in distribution?**
+3. **To what extent can the practical implementation of these models translate theoretical optimization into operational improvements for a distributor?**
+
+The practical application developed as part of this research tries to show how theoretical optimization models can be directly implemented to improve route planning, reduce operational costs, and support more efficient delivery scheduling.
+""")
+
 # ── Why Mathematical Models in Logistics? ────────────────────────────────────
 st.markdown("---")
 st.subheader("1. Why Use Mathematical Models in Transportation and Logistics?")
@@ -64,25 +76,11 @@ viable nor operationally feasible**.
 
 The primary goal is the minimization of total operational costs — total distance, time, 
 or travel cost incurred by all vehicles across all routes.
+
+In each of these scenarios, the MDVRP framework tries to answer the questions: **How many depots should we operate? Where should they be located? Which customers should each depot serve? How should vehicles be routed from each depot to maximize efficiency by time and cost?**
 """)
 
-st.markdown("**The model satisfies the following conditions:**")
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("""
-- ✅ **Unique Customer Visit** — each store is served exactly once
-- ✅ **Flow Conservation** — vehicles entering a node must also depart
-- ✅ **Capacity Constraint** — total load cannot exceed vehicle capacity
-    """)
-with col2:
-    st.markdown("""
-- ✅ **Depot Integrity** — routes originate and terminate at the same depot
-- ✅ **Vehicle Availability ($M_d$)** — number of routes per depot ≤ available vehicles
-- ✅ **Subtour Elimination** — no isolated cycles disconnected from depots
-    """)
-
-st.markdown("**The MDVRP framework answers the following strategic questions:**")
+st.markdown("**The MDVRP framework answers the following questions:**")
 st.markdown(f"""
 | Question | Answer in this application |
 |---|---|
@@ -90,15 +88,13 @@ st.markdown(f"""
 | Where should they be located? | North, South, and Ilfov-Otopeni — covering all distribution zones |
 | Which customers should each depot serve? | Nearest-depot assignment via Haversine distance |
 | How should vehicles be routed? | Clarke-Wright Savings + 2-opt local search |
-| How to respect fleet availability? | Load balancing enforces $M_d$ constraint per depot |
+| How to respect fleet availability? | Load balancing enforces M_d constraint per depot |
 """)
 
 # ── FSMVRP ───────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.subheader("3. Fleet Size and Mix Vehicle Routing Problem (FSMVRP)")
-
-vt_names = ", ".join(vt.name for vt in vehicle_types)
-st.markdown(f"""
+st.markdown("""
 Unlike the classical VRP which assumes a **homogeneous fleet**, the FSMVRP acknowledges 
 that most logistics providers operate **heterogeneous fleets** comprising vehicles of 
 different capacities, costs, and operational characteristics.
@@ -106,130 +102,28 @@ different capacities, costs, and operational characteristics.
 The FSMVRP seeks to determine not only the optimal routes for serving customers but also 
 the **optimal composition of the fleet** — how many vehicles of each type should be 
 deployed to minimize total system cost.
-
-Current fleet in this application: **{vt_names}**
 """)
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**Key distinctions from classical VRP:**")
-    st.markdown("""
-- In VRP, all vehicles are **identical** — one capacity, one cost
-- FSMVRP acknowledges that different vehicle types offer **distinct advantages**:
-  - **Economies of scale** — larger vehicles cost less per tonne-km
-  - **Operational flexibility** — smaller vehicles navigate urban areas better
-  - **Environmental compliance** — different emission profiles per vehicle class
-    """)
-with col2:
-    st.markdown("**Cost structure:**")
-    st.markdown("""
-By integrating **fixed costs** (leasing/amortization) and **variable costs** (fuel/energy), 
-the model justifies the use of a mixed fleet:
-
-$$\\min Z = \\underbrace{\\sum_k F_k \\cdot n_k}_{\\text{fixed}} + \\underbrace{\\sum_k c_k \\cdot d_k}_{\\text{variable}}$$
-
-This balance between vehicle count and total operational cost ensures the network 
-can handle **synchronized deliveries** and **sustainable urban replenishment** 
-while maintaining profitability.
-    """)
 
 # ── Integration Conclusions ───────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("4. Integration of Models — Key Conclusions")
-st.markdown(
-    "The integration of MDVRP and FSMVRP models and their constraints leads to the "
-    "following conclusions:"
-)
+st.subheader("4. Integration of Models")
+st.markdown("The integration of models leads to the following conclusions:")
 
-c1, c2 = st.columns(2)
-with c1:
-    st.success("""
-**🎯 Strategic Versatility**
-
-The combined MDVRP-FSMVRP framework adapts to different distribution scenarios — 
-from dense urban delivery with small vehicles to high-volume inter-depot transfers 
-with heavy trucks. The model selects the right vehicle type for each route 
-automatically, based on demand and cost structure.
-    """)
-    st.success("""
-**🔄 Coordination**
-
-Multi-depot routing requires coordinated assignment of customers to depots and
-vehicles to routes. The load balancing mechanism ($M_d$ constraint) ensures that 
-no single depot is overloaded, distributing the delivery workload proportionally 
-across all available fleet resources.
-    """)
-
-with c2:
-    st.success("""
-**🗺️ Territorial Efficiency**
-
-By assigning each customer to the nearest depot (Haversine assignment), the model 
-minimizes unnecessary cross-city travel. This territorial partitioning reduces 
-total fleet distance and improves delivery time windows — directly impacting 
-customer satisfaction and fuel consumption.
-    """)
-    st.success("""
-**🛡️ Network Resilience**
-
-The multi-depot structure provides operational resilience — if one depot faces
-capacity constraints or disruptions, the load balancing algorithm can redistribute 
-customers to alternative depots. The $M_d$ constraint enforcement ensures that the 
-routing plan remains executable with the physical fleet available at each location.
-    """)
-
-# ── Application Summary ───────────────────────────────────────────────────────
-st.markdown("---")
-st.subheader("5. Application to the Bucharest Distribution Network")
-st.markdown(f"""
-This application implements the theoretical MDVRP and FSMVRP frameworks on a realistic 
-scenario for a general merchandise distributor operating in **Bucharest, Romania**:
-""")
-
-col1, col2, col3 = st.columns(3)
-col1.metric("Depots", len(depots), "Bucharest metropolitan area")
-col2.metric("Active stores", len(customers), "Across all districts")
-col3.metric("Vehicle types", len(vehicle_types), "Heterogeneous fleet")
-
-st.markdown(f"""
-The network covers **{total_demand:.1f} tonnes** of daily demand across stores in all 
-Bucharest districts and peri-urban areas, served by a mixed fleet of {vt_names}.
-
-The interactive application demonstrates that the mathematical models are not merely 
-theoretical constructs — they are **practical decision-support tools** that fleet 
-managers can use daily to answer the three fundamental distribution questions: 
-*when, how much, and which routes*.
+st.info("""
+1. **Fleet managers should consider the Total Cost of Ownership**, mixing high fixed acquisition costs with load-dependent variable operational costs.
+2. **A heterogeneous fleet** allows a distributor to function in diverse environments from high volume replenishment to sustainable urban delivery.
+3. **MDVRP is useful for minimizing the total distance** across a national network preventing overlapping routes and reducing miles.
+4. **A multi-depot configuration** provides a safety net against operational risks and stores can be dynamically reallocated between hubs during supply chain disruptions.
 """)
 
 # ── Final Statement ───────────────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("6. Final Conclusions")
+st.subheader("5. Final Conclusions")
 st.markdown("""
-The research demonstrates that mathematical optimization of fleet management produces 
-structurally sound and operationally feasible distribution plans. The key findings are:
-
-**1. Mathematical models are essential** for managing the combinatorial complexity of 
-multi-depot, heterogeneous-fleet distribution — problems that are NP-hard and cannot 
-be solved optimally by manual planning at real-world scale.
-
-**2. The MDVRP framework** provides a rigorous method for simultaneously solving 
-customer-depot assignment and route optimization, respecting all operational constraints 
-(capacity, time windows, depot availability).
-
-**3. The FSMVRP extension** adds strategic value by optimizing fleet composition — 
-recognizing that the choice of vehicle types directly impacts both fixed and variable 
-costs, and that minimizing distance alone does not minimize total cost.
-
-**4. The integration of both models** delivers Strategic Versatility, Coordination, 
-Territorial Efficiency, and Network Resilience — the four pillars of an effective 
-urban distribution strategy for general merchandise.
-
-**5. The practical implementation** in an interactive web application confirms that 
-these models are accessible, interpretable, and directly applicable to real-world 
-fleet management decisions.
+The application developed in this research demonstrates that the MDVRP and FSMVRP models are not only theoretically sound but also practically implementable and operationally useful. The application thus fulfills the practical objective: to translate the theoretical models of fleet management optimization into a tool that is directly applicable to the operational challenges faced by a distributor.
 """)
 
 st.caption(
     "Scientific Research: Fleet Management for a General Merchandise Distributor · "
-    "MSc Transport Management · Faculty of Transport · National University of Science and Technology POLITEHNICA Bucharest · 2024-2026"
+    "MSc Transport Management · Faculty of Transport · Politehnica University of Bucharest · 2024-2026"
 )

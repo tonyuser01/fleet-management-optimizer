@@ -24,6 +24,8 @@ with st.expander("📖 Theoretical Framework: Fleet Size and Mix VRP"):
     distribution network optimization. Unlike the classical VRP which assumes a homogeneous
     fleet, the FSMVRP acknowledges that most logistics providers operate heterogeneous fleets
     comprising vehicles of different capacities, costs, and operational characteristics.
+    
+    The FSMVRP seeks to determine not only the optimal routes for serving customers but also the optimal composition of the fleet, how many vehicles of each type should be deployed to minimize total system cost.
 
     ### 2. Mathematical Formulation
     $$\min Z = \sum_{k=1}^{T}{F_k\left(\sum_{j=1}^{n}x_{0jk}\right)}+\sum_{k=1}^{T}\sum_{i=0}^{n}\sum_{j=0}^{n}c_{ijk}\, x_{ijk}$$
@@ -137,8 +139,8 @@ if best is not None:
         "📋 Executive Summary",
         "🚛 Optimal configuration",
         "📊 Solution comparison",
-        "📈 Sensitivity analysis",
-        "🔢 Mathematical model",
+        "📈 Analysis",
+        " Mathematical model",
         "🗺️ CS Routing Results"
     ])
 
@@ -184,7 +186,7 @@ if best is not None:
         st.table(pd.DataFrame(inventory_data))
 
         st.markdown("---")
-        st.markdown("#### Strategic Recommendation")
+        st.markdown("#### Recommendation")
         if best.utilization > 90:
             st.warning("⚠️ **High Utilization:** Fleet near maximum capacity. Any demand increase requires additional vehicles.")
         elif best.utilization < 70:
@@ -219,6 +221,12 @@ if best is not None:
         if rows:
             st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
+        st.markdown("""
+**Cost breakdown** shows the proportion of total daily cost attributed to fixed costs 
+(vehicle leasing/amortization — paid regardless of distance driven) versus variable costs 
+(fuel and maintenance — proportional to km driven). A high fixed cost ratio suggests 
+the fleet is underutilized; a high variable cost ratio suggests high operational intensity.
+""")
         fig_pie = go.Figure(data=[go.Pie(
             labels=["Fixed cost", "Variable cost"],
             values=[round(best.fixed_cost), round(best.variable_cost)],
@@ -228,6 +236,11 @@ if best is not None:
                                margin=dict(t=40, b=20, l=20, r=20))
         st.plotly_chart(fig_pie, use_container_width=True)
 
+        st.markdown("""
+**Vehicles used by type** shows how many units of each vehicle type are deployed 
+in the optimal configuration. The mix reflects the trade-off between capacity 
+(fewer large vehicles) and flexibility (more small vehicles) for the current demand level.
+""")
         alloc = {vt.name: best.allocation.get(vt.id, 0)
                  for vt in st.session_state.vehicle_types if best.allocation.get(vt.id, 0) > 0}
         fig_bar = go.Figure(data=[go.Bar(
@@ -242,6 +255,21 @@ if best is not None:
     # ── Solution comparison ───────────────────────────────────────────────────
     with t2:
         st.subheader("Top 10 feasible solutions")
+        st.markdown("""
+The optimizer evaluates **all feasible combinations** of vehicle types within the 
+available fleet inventory. A configuration is feasible if:
+- Total fleet capacity ≥ total demand
+- Number of vehicles ≤ maximum allowed
+
+Solutions are **ranked by total cost** (fixed + variable). The highlighted row (rank 1) 
+is the optimal solution for the selected objective:
+- **Minimize total cost** — lowest EUR/day regardless of vehicle count
+- **Minimize vehicles** — fewest vehicles, then lowest cost as tiebreaker  
+- **Balanced utilization** — closest to 85% load factor, then lowest cost
+
+The scatter plot shows the trade-off between number of vehicles and total cost — 
+larger bubbles indicate higher fleet utilization.
+""")
         if top20 and not isinstance(top20[0], str):
             rows_top = []
             for i, sol in enumerate(top20[:10]):
@@ -283,7 +311,7 @@ if best is not None:
 
     # ── Sensitivity analysis ──────────────────────────────────────────────────
     with t3:
-        st.subheader("Sensitivity analysis — demand variation")
+        st.subheader("Analysis — demand variation")
         st.markdown("""
 This analysis shows how the **optimal fleet cost and composition** change when total demand 
 varies between **50% and 150%** of the current base demand. It answers the question:
@@ -326,10 +354,14 @@ vehicle type threshold is crossed. This is the fixed cost effect ($F_k$) from th
             st.markdown("---")
             st.markdown("#### 📌 Automatic Conclusions")
             st.markdown(f"""
-- **Lowest cost scenario:** {min_cost_row['demand_t']:.1f} t demand → **{min_cost_row['total_cost']:.0f} EUR/day**
+> All costs represent **total daily fleet operating costs** = fixed vehicle costs 
+> (leasing/amortization per day) + variable routing costs (fuel × distance).
+
+- **Lowest cost scenario:** {min_cost_row['demand_t']:.1f} t demand → **{min_cost_row['total_cost']:.0f} EUR/day** 
+  *(total daily cost for the optimal fleet at this demand level)*
 - **Highest cost scenario:** {max_cost_row['demand_t']:.1f} t demand → **{max_cost_row['total_cost']:.0f} EUR/day**
 - **Most cost-efficient point:** {min_cpt_row['demand_t']:.1f} t demand → **{min_cpt_row['cost_per_ton']:.2f} EUR/t** 
-  *(fleet is best utilized at this demand level)*
+  *(lowest cost per tonne delivered — fleet is best utilized at this demand level)*
 - **Cost increase from min to max demand:** **{((max_cost_row['total_cost'] - min_cost_row['total_cost']) / min_cost_row['total_cost'] * 100):.1f}%**
 - **Vehicle range:** {df_s['total_vehicles'].min()} – {df_s['total_vehicles'].max()} vehicles across the demand spectrum
             """)

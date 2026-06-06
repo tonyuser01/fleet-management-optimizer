@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import math
 from datetime import datetime, timedelta
-import plotly.express as px
+# import plotly.express as px # Not used, can be removed if not needed elsewhere
 import plotly.graph_objects as go
 
 from utils.data_models import (
@@ -15,6 +15,7 @@ from utils.data_models import (
     EUROPALLET, haversine
 )
 from utils.mdvrp_algorithms import solve_mdvrp, get_transport_stats
+from typing import Dict # Adăugat importul pentru Dict
 
 st.title("🕐 Route Timeline & Delivery Schedule")
 st.markdown(
@@ -59,7 +60,12 @@ with st.sidebar:
 
 def clean_name(name: str) -> str:
     import re
-    return re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name).strip()
+    # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
+    name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
+    name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
+    # Scoate orice alt sufix (P1), (P2) rămas
+    name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
+    return name.strip()
 
 
 def travel_time_minutes(dist_km: float, speed_kmh: float) -> float:
