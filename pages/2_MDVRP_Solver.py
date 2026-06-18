@@ -6,8 +6,9 @@ import streamlit as st
 import pandas as pd
 import time
 from streamlit.components.v1 import html as st_html
+from typing import cast, Any # Added for casting
 
-from utils.data_models import DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET
+from utils.data_models import DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET, clean_name
 from utils.mdvrp_algorithms import solve_mdvrp
 from utils.map_utils import build_map, map_to_html
 
@@ -65,6 +66,25 @@ with st.sidebar:
     else:
         selected_vt = next(vt for vt in st.session_state.vehicle_types if vt.name == vt_sel)
 
+    # Warning logic for mismatched vehicle types
+    if vt_sel != "Mixed Fleet (Auto-select)":
+        has_fridge_demand = any(c.demand_refrigerated > 0 for c in st.session_state.customers)
+        has_ambient_demand = any(c.demand_ambient > 0 for c in st.session_state.customers)
+
+        if not isinstance(selected_vt, list):
+            if has_fridge_demand and not selected_vt.is_refrigerated:
+                st.warning(
+                    "⚠️ **Fleet Mismatch:** You selected an **Ambient** vehicle, but the network "
+                    "contains stores requiring **Refrigeration**. These orders cannot be fulfilled. "
+                    "Switch to **Mixed Fleet** or a Refrigerated type."
+                )
+            elif has_ambient_demand and selected_vt.is_refrigerated:
+                st.warning(
+                    "⚠️ **Fleet Mismatch:** You selected a **Refrigerated** vehicle, but the network "
+                    "contains standard ambient orders. Consider switching to **Mixed Fleet** to "
+                    "cover all deliveries efficiently."
+                )
+
     apply_2opt = st.checkbox("Apply 2-opt improvement", value=True)
 
     load_balance = st.checkbox(
@@ -102,7 +122,7 @@ with st.sidebar:
         - Vehicles available: {sum(vt.max_available for vt in selected_vt)}
         """)
     else:
-        # Arată alocarea per depozit pentru vehiculul selectat
+        # Show per-depot allocation for the selected vehicle
         alloc_lines = "\n".join(
             f"  - {d.name.split('—')[-1].strip()}: "
             f"**{d.fleet_allocation.get(selected_vt.id, 0)}** vehicles"
@@ -224,18 +244,6 @@ if "routes" in st.session_state and st.session_state.routes:
     with tab_table:
         st.subheader("Route details")
 
-        # Trasee text — formatul academic
-        st.markdown("**Route sequences:**")
-
-        def clean_name(name: str) -> str:
-            import re
-            # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
-            name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
-            name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
-            # Scoate orice alt sufix (P1), (P2) rămas
-            name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
-            return name.strip()
-
         for i, r in enumerate(routes):
             stops = " → ".join(clean_name(c.name) for c in r.customers)
             st.markdown(
@@ -244,7 +252,7 @@ if "routes" in st.session_state and st.session_state.routes:
             )
         st.markdown("---")
 
-        # Tabel detalii
+        # Details table
         rows = [{
             "Route":            f"Route {i+1}",
             "Depot":            r.depot.name,
@@ -253,11 +261,11 @@ if "routes" in st.session_state and st.session_state.routes:
             "Sequence":         r.depot.name + " → "
                                 + " → ".join(clean_name(c.name) for c in r.customers)
                                 + " → " + r.depot.name,
-            "Demand (t)":       f"{r.total_demand:.2f} t ({r.total_demand * 1000:.0f} kg)",
-            "Capacity (t)":     f"{r.vehicle_type.capacity:.1f} t",
+            "Demand (t)":       r.total_demand, # Numeric value
+            "Capacity (t)":     r.vehicle_type.capacity, # Numeric value
             "Utilization (%)":  round(r.total_demand / r.vehicle_type.capacity * 100, 1),
-            "Distance (km)":    f"{r.total_distance:.2f} km",
-            "Cost (€)":         f"{r.total_cost:.2f} €",
+            "Distance (km)":    r.total_distance, # Numeric value
+            "Cost (€)":         r.total_cost, # Numeric value
         } for i, r in enumerate(routes)]
 
         df = pd.DataFrame(rows)
@@ -268,7 +276,14 @@ if "routes" in st.session_state and st.session_state.routes:
             return "background-color: #c62828; color: white; font-weight: 600"
 
         st.dataframe(
-            df.style.map(color_util, subset=["Utilization (%)"]),
+            df.style.map(color_util, subset=["Utilization (%)"])
+            .format({
+                "Demand (t)": "{:.2f}",
+                "Capacity (t)": "{:.2f}",
+                "Utilization (%)": "{:.1f}",
+                "Distance (km)": "{:.2f}",
+                "Cost (€)": "{:.2f}"
+            }),
             width='stretch', hide_index=True
         )
 
@@ -276,11 +291,38 @@ if "routes" in st.session_state and st.session_state.routes:
         summary = df.groupby("Depot").agg(
             Routes=("Route", "count"),
             Stops=("Stops", "sum"),
-            Total_demand=("Demand (t)", "sum"),
-            Total_distance=("Distance (km)", "sum"),
-            Total_cost=("Cost (€)", "sum")
+            Total_demand=("Demand (t)", "sum"), # Numeric sum
+            Total_distance=("Distance (km)", "sum"), # Numeric sum
+            Total_cost=("Cost (€)", "sum") # Numeric sum
         ).reset_index()
-        st.dataframe(summary, width='stretch', hide_index=True)
+        
+        # Convert sum columns to appropriate numeric type to enable sorting
+        summary["Total_demand"] = summary["Total_demand"].astype(float)
+        summary["Total_distance"] = summary["Total_distance"].astype(float)
+        summary["Total_cost"] = summary["Total_cost"].astype(float)
+
+        st.dataframe(
+            summary,
+            width='stretch',
+            hide_index=True,
+            column_config={
+                "Total_demand": st.column_config.NumberColumn(
+                    "Total Demand (t)",
+                    format="%.2f", # Format for display
+                    help="Total demand served by this depot in tonnes and kilograms."
+                ),
+                "Total_distance": st.column_config.NumberColumn(
+                    "Total Distance (km)",
+                    format="%.2f", # Format for display
+                    help="Total distance covered by all routes from this depot."
+                ),
+                "Total_cost": st.column_config.NumberColumn(
+                    "Total Cost (€)",
+                    format="%.2f", # Format for display
+                    help="Total cost (fixed + variable) for all routes from this depot."
+                ),
+            }
+        )
 
     # ── TAB 3: COMPARISON ────────────────────────────────────────────────────
     with tab_cmp:
@@ -315,6 +357,20 @@ if "routes" in st.session_state and st.session_state.routes:
                 st.success(f"✅ Clarke-Wright is **{improvement:.1f}%** more efficient than Nearest Neighbor in total distance.")
             else:
                 st.info(f"ℹ️ On this instance, Nearest Neighbor achieved {abs(improvement):.1f}% less total distance.")
+
+            with st.expander("🧐 Why are the results identical?"):
+                num_cust = len(st.session_state.customers)
+                num_depots = len(st.session_state.depots)
+                avg_cust = num_cust // num_depots if num_depots > 0 else 0
+
+                st.markdown(f"""
+                If both algorithms return the same numbers, it is usually due to the following factors:
+                1. **2-opt Effect:** The local search heuristic (2-opt) is applied to both solutions. It corrects the "greedy" errors of the Nearest Neighbor, bringing both routes to a similar optimal form.
+                2. **Small Instance:** We have {num_cust} customers distributed across {num_depots} depots (~{avg_cust} customers/depot). In such a small group, there is often only one efficient logical sequence.
+                3. **Urban Density:** Distances in Bucharest are relatively small. When customers are close together, both methods (extending the route vs. merging segments) tend to identify the same geographic groupings.
+                
+                Differences become much more visible in large networks (>100 customers) or in rural distributions where distances are large.
+                """)
 
             st.subheader("Map — Clarke-Wright Savings")
             st_html(map_to_html(build_map(

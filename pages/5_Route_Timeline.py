@@ -11,11 +11,11 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 from utils.data_models import (
-    DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET,
-    EUROPALLET, haversine
+    DEPOTS_BUCHAREST, CUSTOMERS_BUCHAREST, VEHICLE_FLEET, Customer,
+    EUROPALLET, haversine, clean_name
 )
 from utils.mdvrp_algorithms import solve_mdvrp, get_transport_stats
-from typing import Dict # Adăugat importul pentru Dict
+from typing import Dict, Optional
 
 st.title("🕐 Route Timeline & Delivery Schedule")
 st.markdown(
@@ -35,10 +35,22 @@ with st.sidebar:
     departure_hour = st.slider("Depot departure time", 4, 10, 6)
     departure_min  = st.slider("Departure minute",     0, 59,  0, 5)
     avg_speed      = st.slider("Average speed (km/h)", 20, 90, 40)
+    traffic_delay  = st.slider("Traffic/Signal delay per leg (min)", 0, 15, 2, help="Fixed time added to each travel segment to account for traffic lights and urban congestion.")
     shift_end      = st.slider("Shift end hour", 16, 24, 22)
     reload_time    = st.slider("Reload time at depot (min)", 10, 60, 20)
     unload_per_pallet = st.slider("Unloading time per pallet (min)", 1, 10, 2)
+    setup_time     = st.slider("Fixed setup time per stop (min)", 0, 20, 5, help="Time spent for parking, paperwork, and opening cargo doors at each customer.")
+    st.caption( 
+        "⏱️ **Note:** Fixed setup time covers parking, paperwork, and opening cargo doors at each stop. " 
+        "During peak hours, only travel-related delays are affected (signal overhead is doubled and " 
+        "cruising speed is reduced by 30%); setup time itself remains unchanged." 
+    )
     pallet_payload = st.slider("Net payload per pallet (kg)", 200, 1200, 800, 50)
+    
+    st.markdown("---")
+    st.subheader("Peak Hour Settings")
+    morning_peak = st.slider("Morning peak start", 6, 11, 8)
+    evening_peak = st.slider("Evening peak start", 15, 20, 16)
 
     st.markdown("---")
     vt_options = ["Mixed Fleet (Auto-select)"] + [vt.name for vt in st.session_state.vehicle_types]
@@ -49,6 +61,25 @@ with st.sidebar:
     else:
         selected_vt = next(vt for vt in st.session_state.vehicle_types if vt.name == vt_sel)
 
+    # Warning logic for mismatched vehicle types
+    if vt_sel != "Mixed Fleet (Auto-select)":
+        has_fridge_demand = any(c.demand_refrigerated > 0 for c in st.session_state.customers)
+        has_ambient_demand = any(c.demand_ambient > 0 for c in st.session_state.customers)
+
+        if not isinstance(selected_vt, list):
+            if has_fridge_demand and not selected_vt.is_refrigerated:
+                st.warning(
+                    "⚠️ **Fleet Mismatch:** You selected an **Ambient** vehicle, but the network "
+                    "contains stores requiring **Refrigeration**. These orders cannot be fulfilled. "
+                    "Switch to **Mixed Fleet** or a Refrigerated type."
+                )
+            elif has_ambient_demand and selected_vt.is_refrigerated:
+                st.warning(
+                    "⚠️ **Fleet Mismatch:** You selected a **Refrigerated** vehicle, but the network "
+                    "contains standard ambient orders. Consider switching to **Mixed Fleet** to "
+                    "cover all deliveries efficiently."
+                )
+
     algo = st.selectbox("Routing algorithm", [
         "Clarke-Wright Savings", "Nearest Neighbor"
     ])
@@ -58,38 +89,40 @@ with st.sidebar:
 
 # ── Helper: build timeline for one route ─────────────────────────────────────
 
-def clean_name(name: str) -> str:
-    import re
-    # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
-    name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
-    name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
-    # Scoate orice alt sufix (P1), (P2) rămas
-    name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
-    return name.strip()
-
-
-def travel_time_minutes(dist_km: float, speed_kmh: float) -> float:
+def travel_time_minutes(dist_km: float, speed_kmh: float, overhead_min: float = 2.0, current_time: Optional[datetime] = None, m_peak: int = 8, e_peak: int = 16) -> float:
     """
     Realistic travel time including acceleration and deceleration phases.
-    For short distances, a vehicle never reaches cruising speed.
+    Note: This model does not use road networks. It treats every direct jump between 
+    two GPS coordinates as a single 'segment' (leg).
     
-    Model: assumes 2 min fixed overhead per stop (traffic lights, 
-    parking, maneuvering) + distance/speed travel time.
-    Minimum travel time = 1 min regardless of distance.
+    Rush Hour Logic:
+    - Morning: 08:00 - 10:00
+    - Afternoon: 16:00 - 19:00
+    In these intervals, the overhead (simulating traffic lights/intersections) is 
+    doubled and average speed is reduced by 30%.
     """
     if dist_km <= 0:
         return 0.0
     
-    # Timp de bază la viteza de croazieră
-    base_min = (dist_km / speed_kmh) * 60.0
-    # Overhead fix per deplasare urbană (semafoare, manevre, parcare)
-    overhead_min = 2.0
+    speed_factor = 1.0
+    if current_time:
+        is_morning_peak = m_peak <= current_time.hour < (m_peak + 2)
+        is_evening_peak = e_peak <= current_time.hour < (e_peak + 3)
+        
+        if is_morning_peak or is_evening_peak:
+            overhead_min *= 2.0  # Double the signal/traffic light delay
+            speed_factor = 0.7   # 30% reduction in cruising speed
+
+    # Base time at cruise speed
+    effective_speed = speed_kmh * speed_factor
+    base_min = (dist_km / effective_speed) * 60.0
+    
     total = base_min + overhead_min
     return max(total, 1.0)  # Minim 1 minut
 
 def build_timeline(route, departure_dt: datetime,
-                   speed_kmh: float, reload_min: int,
-                   pallet_payload_kg: float, unload_per_pallet: int = 2) -> list:
+                   speed_kmh: float, reload_min: int, traffic_overhead: float,
+                   pallet_payload_kg: float, unload_per_pallet: int = 2, setup_min: int = 5) -> list:
     """
     Build a list of timeline events for a single route.
     Each event: {stop, type, arrival, departure, distance_leg, load_kg, pallets, cumulative_km, dist_from_depot}
@@ -127,7 +160,7 @@ def build_timeline(route, departure_dt: datetime,
     for idx, customer in enumerate(route.customers):
         # Travel leg
         leg_km = haversine(current_lat, current_lon, customer.lat, customer.lon)
-        travel_min = travel_time_minutes(leg_km, speed_kmh)
+        travel_min = travel_time_minutes(leg_km, speed_kmh, traffic_overhead, current_time)
         arrival_time = current_time + timedelta(minutes=travel_min)
         cumulative_km += leg_km
         dist_from_depot = haversine(route.depot.lat, route.depot.lon, customer.lat, customer.lon)
@@ -137,7 +170,7 @@ def build_timeline(route, departure_dt: datetime,
         pallets_delivered = math.ceil(delivered_kg / (pallet_payload_kg + pallet.weight_kg))
         pallets_remaining = math.ceil(max(remaining_load, 0) / (pallet_payload_kg + pallet.weight_kg))
 
-        service_min = pallets_delivered * unload_per_pallet
+        service_min = setup_min + (pallets_delivered * unload_per_pallet)
         departure_time = arrival_time + timedelta(minutes=service_min)
 
         events.append({
@@ -163,7 +196,8 @@ def build_timeline(route, departure_dt: datetime,
     # Return to depot
     return_km = haversine(current_lat, current_lon, route.depot.lat, route.depot.lon)
     cumulative_km += return_km
-    return_arrival = current_time + timedelta(minutes=travel_time_minutes(return_km, speed_kmh))
+    return_travel_min = travel_time_minutes(return_km, speed_kmh, traffic_overhead, current_time)
+    return_arrival = current_time + timedelta(minutes=return_travel_min)
 
     events.append({
         "Stop #":             str(len(route.customers) + 1),
@@ -185,8 +219,8 @@ def build_timeline(route, departure_dt: datetime,
 
 
 def build_multi_trip_timeline(route, departure_dt, speed_kmh,
-                               reload_min, pallet_payload_kg,
-                               max_pallets_per_trip, unload_per_pallet: int = 2) -> list:
+                               reload_min, traffic_overhead, pallet_payload_kg,
+                               max_pallets_per_trip, unload_per_pallet: int = 2, setup_min: int = 5) -> list:
     """
     If route demand exceeds one truck load, split into multiple trips with
     reload stops at the depot between trips.
@@ -243,12 +277,12 @@ def build_multi_trip_timeline(route, departure_dt, speed_kmh,
         for idx, customer in enumerate(trip_customers):
             leg_km     = haversine(cur_lat, cur_lon, customer.lat, customer.lon)
             cumulative_km += leg_km
-            travel_min = travel_time_minutes(leg_km, speed_kmh)
+            travel_min = travel_time_minutes(leg_km, speed_kmh, traffic_overhead, current_time)
             arrival    = current_time + timedelta(minutes=travel_min)
             delivered  = customer.demand * 1000
             remaining -= delivered
             pallets_to_deliver = math.ceil(delivered / (pallet_payload_kg + pallet.weight_kg))
-            service_min = pallets_to_deliver * unload_per_pallet
+            service_min = setup_min + (pallets_to_deliver * unload_per_pallet)
             dep_time   = arrival + timedelta(minutes=service_min)
             p_rem      = math.ceil(max(remaining, 0) / (pallet_payload_kg + pallet.weight_kg))
             dist_dep   = haversine(route.depot.lat, route.depot.lon, customer.lat, customer.lon)
@@ -275,7 +309,8 @@ def build_multi_trip_timeline(route, departure_dt, speed_kmh,
         # Return to depot
         ret_km  = haversine(cur_lat, cur_lon, route.depot.lat, route.depot.lon)
         cumulative_km += ret_km
-        ret_arr = current_time + timedelta(minutes=travel_time_minutes(ret_km, speed_kmh))
+        ret_travel_min = travel_time_minutes(ret_km, speed_kmh, traffic_overhead, current_time)
+        ret_arr = current_time + timedelta(minutes=ret_travel_min)
 
         if customers_remaining:
             # More trips needed → reload
@@ -365,20 +400,18 @@ st.markdown(f"**Departure:** {departure_dt.strftime('%H:%M')} | **Speed:** {avg_
 summary_rows = []
 route_events = {} # Cache for expanders
 base_date = datetime.now().date()
-if isinstance(selected_vt, list):
-    max_p = max(vt.max_pallets(EUROPALLET, pallet_payload) for vt in selected_vt)
-else:
-    max_p = selected_vt.max_pallets(EUROPALLET, pallet_payload)
 
 for i, route in enumerate(routes):
+    # Determine the specific pallet capacity of the vehicle allocated to the current route
+    route_max_p = route.vehicle_type.max_pallets(EUROPALLET, pallet_payload)
     used_p = route.total_pallets(EUROPALLET, pallet_payload)
-    util_pct = round(min(used_p / max_p * 100, 100.0), 2) if max_p else 0.0
+    util_pct = round(min(used_p / route_max_p * 100, 100.0), 2) if route_max_p else 0.0
     
     # 1. Build Timeline Events
-    if used_p > max_p:
-        evs = build_multi_trip_timeline(route, departure_dt, avg_speed, reload_time, pallet_payload, max_p, unload_per_pallet)
+    if used_p > route_max_p:
+        evs = build_multi_trip_timeline(route, departure_dt, avg_speed, reload_time, traffic_delay, pallet_payload, route_max_p, unload_per_pallet, setup_time)
     else:
-        evs = build_timeline(route, departure_dt, avg_speed, reload_time, pallet_payload, unload_per_pallet)
+        evs = build_timeline(route, departure_dt, avg_speed, reload_time, traffic_delay, pallet_payload, unload_per_pallet, setup_time)
     
     route_events[i] = evs
 
@@ -387,7 +420,7 @@ for i, route in enumerate(routes):
         "Route": f"Route {i+1}",
         "Depot": route.depot.name,
         "Pallets": used_p,
-        "Pallet util (%)": round(min(used_p / max_p * 100, 100.0), 2) if max_p else 0.0,
+        "Pallet util (%)": util_pct,
         "Distance (km)": round(route.total_distance, 2),
         "Cost (€)": round(route.total_cost, 2)
     })
@@ -399,12 +432,21 @@ def color_putil(val):
     if val >= 80: return "background-color: #2e7d32; color: white; font-weight: 600"
     if val >= 50: return "background-color: #f57f17; color: white; font-weight: 600"
     return "background-color: #c62828; color: white; font-weight: 600"
-st.dataframe(df_sum.style.map(color_putil, subset=["Pallet util (%)"]), width='stretch', hide_index=True)
+st.dataframe(
+    df_sum.style.map(color_putil, subset=["Pallet util (%)"]),
+    width='stretch',
+    hide_index=True,
+    column_config={
+        "Distance (km)": st.column_config.NumberColumn(format="%.2f"),
+        "Cost (€)": st.column_config.NumberColumn(format="%.2f"),
+        "Pallet util (%)": st.column_config.NumberColumn(format="%.2f %%")
+    }
+)
 
 st.markdown("#### 📈 Operating Parameters (Total Fleet)")
 t_stats = get_transport_stats(routes)
 
-# Calculează gradul de utilizare al flotei
+# Calculate fleet utilization rate
 total_demand_served = sum(r.total_demand for r in routes)
 total_capacity      = sum(r.vehicle_type.capacity for r in routes)
 fleet_util          = (total_demand_served / total_capacity * 100) if total_capacity > 0 else 0.0
@@ -428,90 +470,108 @@ st.markdown("""
 # ── Display Details ───────────────────────────────────────────────────────────
 st.markdown("---")
 st.subheader("📝 Step-by-Step Details")
-for i, route in enumerate(routes):
-    with st.expander(f"🚛 Route {i+1} — {route.depot.name} | {route.total_distance:.1f} km", expanded=(i == 0)):
-        events = route_events[i]
-        if len(events) > len(route.customers) + 2: # Multi-trip detection
-            st.warning("⚠️ This route requires reloading at the depot (Multi-trip).")
-        
-        df_tl = pd.DataFrame(events)
 
-        # Selectăm doar coloanele esențiale pentru vizualizarea în tabel
-        visible_cols = [
-            "Stop #", "Location", "Address", "Event", "Arrival", 
-            "Departure", "Leg dist (km)", "Cumulative km"
-        ]
+# Group routes by refrigeration status for separate visualization
+fridge_routes = [(idx, r) for idx, r in enumerate(routes) if r.vehicle_type.is_refrigerated]
+ambient_routes = [(idx, r) for idx, r in enumerate(routes) if not r.vehicle_type.is_refrigerated]
 
-        def style_event(val):
-            if "Departure" in str(val) and "loaded" in str(val):
-                return "background-color: #1e3a8a; color: white; font-weight: bold"
-            if "RELOAD" in str(val):
-                return "background-color: #f59e0b; color: black; font-weight: bold"
-            if "Return" in str(val) and "RELOAD" not in str(val):
-                return "background-color: #065f46; color: white; font-weight: bold"
-            if "Delivery" in str(val):
-                return "background-color: #f3f4f6; color: black"
-            return ""
+for route_group, group_title, group_icon in [
+    (fridge_routes, "Refrigerated Deliveries (Cold Chain)", "❄️"),
+    (ambient_routes, "Ambient Deliveries (General Merchandise)", "📦")
+]:
+    if not route_group:
+        continue
+    
+    st.markdown(f"#### {group_icon} {group_title}")
+    
+    for i, route in route_group:
+        with st.expander(f"{group_icon} Route {i+1} — {route.depot.name} | {route.total_distance:.1f} km", expanded=(i == 0)):
+            events = route_events[i]
+            if len(events) > len(route.customers) + 2: # Multi-trip detection
+                st.warning("⚠️ This route requires reloading at the depot (Multi-trip).")
+            
+            df_tl = pd.DataFrame(events)
 
-        st.dataframe(
-            df_tl[visible_cols].style.map(style_event, subset=["Event"]),
-            width='stretch',
-            hide_index=True,
-            height=min(38 * len(events) + 50, 520)
-        )
+            # Select only the essential columns for the table view
+            visible_cols = [
+                "Stop #", "Location", "Address", "Event", "Arrival", 
+                "Departure", "Leg dist (km)", "Cumulative km"
+            ]
 
-        # ── Individual Cyclogram for this route ──
-        df_local = []
-        for ev in events:
-            dist = ev["Dist from Depot"]
-            if "DepartureDT" in ev:
-                df_local.append({"Time": ev["DepartureDT"], "Distance": dist, "Location": ev["Location"]})
-            if "ArrivalDT" in ev:
-                df_local.append({"Time": ev["ArrivalDT"], "Distance": dist, "Location": ev["Location"]})
-        
-        if df_local:
-            df_plot = pd.DataFrame(df_local).sort_values("Time")
-            fig_r = go.Figure()
-            color = ROUTE_COLORS[i % len(ROUTE_COLORS)]
+            def style_event(val):
+                if "Departure" in str(val) and "loaded" in str(val):
+                    return "background-color: #1e3a8a; color: white; font-weight: bold"
+                if "RELOAD" in str(val):
+                    return "background-color: #f59e0b; color: black; font-weight: bold"
+                if "Return" in str(val) and "RELOAD" not in str(val):
+                    return "background-color: #065f46; color: white; font-weight: bold"
+                if "Delivery" in str(val):
+                    return "background-color: #f3f4f6; color: black"
+                return ""
 
-            fig_r.add_trace(go.Scatter(
-                x=df_plot["Time"], y=df_plot["Distance"],
-                mode='lines+markers',
-                line=dict(color=color, width=3),
-                marker=dict(size=6),
-                hovertemplate="<b>%{text}</b><br>Ora: %{x|%H:%M}<br>Dist: %{y} km<extra></extra>",
-                text=df_plot["Location"]
-            ))
-
-            # Linii punctate orizontale pentru repere clienți
-            for _, row in df_plot[df_plot["Distance"] > 0].iterrows():
-                fig_r.add_shape(type="line", x0=df_plot["Time"].min(), x1=row["Time"],
-                                y0=row["Distance"], y1=row["Distance"],
-                                line=dict(color=color, width=1, dash="dot"), opacity=0.2)
-
-            fig_r.update_layout(
-                title=f"Movement Profile — Route {i+1}",
-                xaxis_title="Timeline",
-                yaxis_title="Km from Depot",
-                height=300,
-                margin=dict(t=40, b=40, l=40, r=20),
-                hovermode="x unified",
-                showlegend=False,
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)"
+            st.dataframe(
+                df_tl[visible_cols].style.map(style_event, subset=["Event"]),
+                width='stretch',
+                hide_index=True,
+                height=min(38 * len(events) + 50, 520),
+                column_config={
+                    "Leg dist (km)": st.column_config.NumberColumn(format="%.2f")
+                }
             )
-            st.plotly_chart(fig_r, use_container_width=True)
 
-        # Route duration
-        first_dep = [e for e in events if e["Departure"] != "—"]
-        last_arr  = [e for e in events if e["Arrival"]   != "—"]
-        if first_dep and last_arr:
-            dep_str = first_dep[0]["Departure"]
-            arr_str = last_arr[-1]["Arrival"]
-            dep_t   = datetime.strptime(dep_str, "%H:%M")
-            arr_t   = datetime.strptime(arr_str, "%H:%M")
-            duration = (arr_t - dep_t).seconds // 60
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Departure",        dep_str)
-            c2.metric("Final return",     arr_str)
-            c3.metric("Total duration",   f"{duration // 60}h {duration % 60}min")
-            c4.metric("Total distance",   f"{route.total_distance:.1f} km")
+            # ── Individual Cyclogram for this route ──
+            df_local = []
+            for ev in events:
+                dist = ev["Dist from Depot"]
+                if "DepartureDT" in ev:
+                    df_local.append({"Time": ev["DepartureDT"], "Distance": dist, "Location": ev["Location"]})
+                if "ArrivalDT" in ev:
+                    df_local.append({"Time": ev["ArrivalDT"], "Distance": dist, "Location": ev["Location"]})
+            
+            if df_local:
+                df_plot = pd.DataFrame(df_local).sort_values("Time")
+                fig_r = go.Figure()
+                color = "#3B8BD4" if route.vehicle_type.is_refrigerated else "#E94560"
+
+                fig_r.add_trace(go.Scatter(
+                    x=df_plot["Time"], y=df_plot["Distance"],
+                    mode='lines+markers',
+                    line=dict(color=color, width=3),
+                    marker=dict(size=6),
+                    hovertemplate="<b>%{text}</b><br>Ora: %{x|%H:%M}<br>Dist: %{y} km<extra></extra>",
+                    text=df_plot["Location"]
+                ))
+
+                # Horizontal dotted lines for customer reference points
+                for _, row in df_plot[df_plot["Distance"] > 0].iterrows():
+                    fig_r.add_shape(type="line", x0=df_plot["Time"].min(), x1=row["Time"],
+                                    y0=row["Distance"], y1=row["Distance"],
+                                    line=dict(color=color, width=1, dash="dot"), opacity=0.2)
+
+                fig_r.update_layout(
+                    title=f"{group_icon} Movement Profile — Route {i+1} ({route.vehicle_type.name})",
+                    xaxis_title="Timeline",
+                    yaxis_title="Km from Depot",
+                    height=300,
+                    margin=dict(t=40, b=40, l=40, r=20),
+                    hovermode="x unified",
+                    showlegend=False,
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0.02)"
+                )
+                st.plotly_chart(fig_r, use_container_width=True)
+
+            # Route duration
+            first_dep = [e for e in events if e["Departure"] != "—"]
+            last_arr  = [e for e in events if e["Arrival"]   != "—"]
+            if first_dep and last_arr:
+                dep_str = first_dep[0]["Departure"]
+                arr_str = last_arr[-1]["Arrival"]
+                dep_t   = datetime.strptime(dep_str, "%H:%M")
+                arr_t   = datetime.strptime(arr_str, "%H:%M")
+                duration = (arr_t - dep_t).seconds // 60
+                actual_dist = float(events[-1]["Cumulative km"])
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Departure",        dep_str)
+                c2.metric("Final return",     arr_str)
+                c3.metric("Total duration",   f"{duration // 60}h {duration % 60}min")
+                c4.metric("Total distance",   f"{actual_dist:.1f} km")

@@ -54,7 +54,7 @@ def nearest_neighbor_routes(
         while True:
             feasible = [
                 c for c in unvisited 
-                if load + c.demand <= vehicle_capacity and (not c.needs_refrigeration or vehicle_type.is_refrigerated)
+                if load + c.demand <= vehicle_capacity and (c.needs_refrigeration == vehicle_type.is_refrigerated)
             ]
             if not feasible:
                 break
@@ -118,7 +118,7 @@ def clarke_wright_routes(
     # Step 1 — initialise one route per customer
     # Skip customers that require refrigeration if the vehicle is not refrigerated
     route_of: Dict[int, List[Customer]] = {
-        c.id: [c] for c in customers if not c.needs_refrigeration or vehicle_type.is_refrigerated
+        c.id: [c] for c in customers if c.needs_refrigeration == vehicle_type.is_refrigerated
     }
     # Track current load of each route object to avoid re-summing
     route_loads: Dict[int, float] = {id(r): sum(c.demand for c in r) for r in route_of.values()}
@@ -417,13 +417,13 @@ def solve_mdvrp(
             return []
 
         if isinstance(vehicle_type, list):
-            # Filtrează vehiculele disponibile la acest depozit bazat pe fleet_allocation
+            # Filter available vehicles at this depot based on fleet_allocation
             if d.fleet_allocation:
                 depot_vts = [
                     vt for vt in vehicle_type
                     if d.fleet_allocation.get(vt.id, 0) > 0
                 ]
-                # Dacă depozitul nu are niciun vehicul alocat, folosește toată flota
+                # If the depot has no allocated vehicles, use the entire fleet
                 if not depot_vts:
                     depot_vts = vehicle_type
             else:
@@ -432,16 +432,16 @@ def solve_mdvrp(
             from utils.fsmvrp_optimizer import solve_fsmvrp_combined_savings
             return solve_fsmvrp_combined_savings(d, custs, depot_vts)
 
-        # Vehicul single — verifică dacă e disponibil la acest depozit
+        # Single vehicle — check if it's available at this depot
         if d.fleet_allocation and d.fleet_allocation.get(vehicle_type.id, 0) == 0:
-            # Vehiculul selectat nu e la acest depozit
-            # Fallback: folosește cel mai ieftin vehicul disponibil la depozit
+            # The selected vehicle is not at this depot
+            # Fallback: use the cheapest available vehicle at the depot
             available_vts = [
                 vt for vt in (vehicle_type if isinstance(vehicle_type, list) else [vehicle_type])
                 if d.fleet_allocation.get(vt.id, 0) > 0
             ]
             if not available_vts:
-                # Niciun vehicul la depozit — returnează gol, va fi tratat de load balancer
+                # No vehicle at the depot — return empty, will be handled by the load balancer
                 return []
             active_vt = available_vts[0]
         else:

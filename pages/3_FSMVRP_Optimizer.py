@@ -67,7 +67,7 @@ with st.sidebar:
         help=f"Auto-calculated from active customers: {auto_demand} t. You can override manually."
     )
 
-    # Calculează automat distanța estimată din datele rețelei
+    # Automatically calculate estimated distance from network data
     if "customers" in st.session_state and "depots" in st.session_state and st.session_state.customers:
         from utils.data_models import haversine
         auto_km = sum(
@@ -92,9 +92,29 @@ with st.sidebar:
             "min_vehicles": "Minimize number of vehicles",
             "balanced":     "Balanced fleet utilization"
         }[x],
-        help="Choose the strategic priority for fleet composition. 'Balanced' targets ~85% utilization."
+        help="Strategic priority. Note: In this dataset, 'min_cost' and 'min_vehicles' often overlap because larger vehicles are more efficient per tonne."
     )
-    max_veh  = st.slider("Maximum vehicles allowed", 3, 20, 12)
+    max_veh = st.slider("Maximum vehicles allowed", 3, 20, 12)
+
+    # Inventory warning for FSMVRP
+    if "customers" in st.session_state and st.session_state.customers:
+        has_fridge_demand = any(c.demand_refrigerated > 0 for c in st.session_state.customers)
+        has_ambient_demand = any(c.demand_ambient > 0 for c in st.session_state.customers)
+        
+        available_fridge = any(vt.is_refrigerated and vt.max_available > 0 for vt in st.session_state.vehicle_types)
+        available_ambient = any(not vt.is_refrigerated and vt.max_available > 0 for vt in st.session_state.vehicle_types)
+        
+        if has_fridge_demand and not available_fridge:
+            st.warning(
+                "⚠️ **Inventory Gap:** You have Refrigerated demand, but **no Refrigerated vehicles** are available "
+                "in your fleet (Max Available = 0). Please update fleet allocation in **Map & Data**."
+            )
+        if has_ambient_demand and not available_ambient:
+            st.warning(
+                "⚠️ **Inventory Gap:** You have Ambient demand, but **no Ambient vehicles** are available "
+                "in your fleet (Max Available = 0). Please update fleet allocation in **Map & Data**."
+            )
+
     run_btn  = st.button("▶ Optimize fleet", type="primary", width='stretch')
 
 # ── Run optimization ──────────────────────────────────────────────────────────
@@ -131,7 +151,11 @@ if best is not None:
 
     c1b, c2b, c3b = st.columns(3)
     c1b.metric("📦 Capacity covered", f"{best.total_capacity:.1f} t")
-    c2b.metric("💸 Cost per tonne",   f"{best.cost_per_ton:.2f} EUR/t")
+    c2b.metric(
+        "💸 Cost per tonne", 
+        f"{best.cost_per_ton:.2f} EUR/t",
+        help="Derived from the Total System Cost (Fixed + Variable) divided by the Total Demand. It represents the average unit cost to deliver one tonne of merchandise."
+    )
     c3b.metric("💡 Surplus capacity", f"{best.total_capacity - total_demand:.1f} t")
 
     st.markdown("---")
@@ -158,8 +182,11 @@ if best is not None:
             st.write(f"**Transport Cost / Ton:** {best.cost_per_ton:.2f} EUR/t")
             if cs_total_cost:
                 gap = ((cs_total_cost - best.total_cost) / best.total_cost) * 100
-                st.write(f"**Operational Gap:** {gap:+.1f}%")
-                st.caption("Difference between theoretical fleet cost and actual routing.")
+                st.write(f"**Operational Gap:** :red[{gap:+.1f}%]" if gap > 0 else f"**Operational Gap:** :green[{gap:+.1f}%]")
+                st.info(f"""
+                **What is Operational Gap?**  
+                This represents the variance between the **Theoretical Fleet Cost** (calculated using estimated distances) and the **Actual Routing Cost** (calculated by the Combined Savings algorithm). A negative value (e.g., {gap:+.1f}%) means the routing engine found higher efficiencies via consolidation than the initial estimate predicted.
+                """)
         with k2:
             st.markdown("### 🚛 Fleet Utilization")
             st.write(f"**Capacity Fill Rate:** {best.utilization:.1f}%")
@@ -273,9 +300,11 @@ larger bubbles indicate higher fleet utilization.
         if top20 and not isinstance(top20[0], str):
             rows_top = []
             for i, sol in enumerate(top20[:10]):
+                if isinstance(sol, str):
+                    continue
                 alloc_str = ", ".join(
-                    f"{sol.allocation[vt.id]}×{vt.name.split('(')[0].strip()}"
-                    for vt in st.session_state.vehicle_types if sol.allocation.get(vt.id, 0) > 0
+                    f"{sol.allocation.get(vt.id, 0)}×{vt.name.split('(')[0].strip()}"
+                    for vt in st.session_state.vehicle_types if sol.allocation and sol.allocation.get(vt.id, 0) > 0
                 )
                 rows_top.append({
                     "Rank": i+1, "Configuration": alloc_str,
@@ -294,7 +323,13 @@ larger bubbles indicate higher fleet utilization.
                 return [""] * len(row)
 
             st.dataframe(
-                df_top.style.apply(highlight_best, axis=1),
+                 df_top.style.apply(highlight_best, axis=1).format({
+                    "Capacity (t)": "{:.2f}",
+                    "Utilization (%)": "{:.1f}",
+                    "Fixed cost (EUR)": "{:.2f}",
+                    "Variable cost (EUR)": "{:.2f}",
+                    "Total cost (EUR)": "{:.2f}"
+                }),
                 width='stretch',
                 hide_index=True
             )
@@ -329,22 +364,25 @@ vehicle type threshold is crossed. This is the fixed cost effect ($F_k$) from th
 """)
         if sens:
             df_s = pd.DataFrame(sens)
+            # Add column for percentage relative to base demand for clear 50%-150% visualization
+            df_s["demand_pct"] = (df_s["demand_t"] / total_demand) * 100
+
             fig_s = go.Figure()
-            fig_s.add_trace(go.Scatter(x=df_s["demand_t"], y=df_s["total_cost"],
+            fig_s.add_trace(go.Scatter(x=df_s["demand_pct"], y=df_s["total_cost"],
                 mode="lines+markers", name="Total cost (EUR)",
                 line=dict(color="#E94560", width=2), marker=dict(size=7)))
-            fig_s.add_trace(go.Scatter(x=df_s["demand_t"], y=df_s["cost_per_ton"],
+            fig_s.add_trace(go.Scatter(x=df_s["demand_pct"], y=df_s["cost_per_ton"],
                 mode="lines+markers", name="Cost/tonne (EUR/t)", yaxis="y2",
                 line=dict(color="#3B8BD4", width=2, dash="dash"), marker=dict(size=7)))
             fig_s.update_layout(
-                xaxis_title="Total demand (t)", yaxis_title="Total cost (EUR)",
+                xaxis_title="Demand Level (% of base)", yaxis_title="Total cost (EUR)",
                 yaxis2=dict(title="Cost per tonne (EUR/t)", overlaying="y", side="right"),
                 height=320, margin=dict(t=30, b=40, l=60, r=60))
             st.plotly_chart(fig_s, use_container_width=True)
 
-            fig_v = px.line(df_s, x="demand_t", y="total_vehicles", markers=True,
-                title="Optimal vehicle count vs demand",
-                labels={"demand_t": "Demand (t)", "total_vehicles": "Vehicles"}, height=260)
+            fig_v = px.line(df_s, x="demand_pct", y="total_vehicles", markers=True,
+                title="Optimal vehicle count vs demand level",
+                labels={"demand_pct": "Demand Level (%)", "total_vehicles": "Vehicles"}, height=260)
             st.plotly_chart(fig_v, use_container_width=True)
 
             min_cost_row = df_s.loc[df_s["total_cost"].idxmin()]

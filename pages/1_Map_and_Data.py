@@ -39,8 +39,8 @@ if "vehicle_types" not in st.session_state: st.session_state.vehicle_types = VEH
 if "active_customer_ids" not in st.session_state:
     st.session_state.active_customer_ids = {c.id for c in st.session_state.all_customers}
 
-# Sincronizează num_vehicles per depot bazat pe flota totală disponibilă
-# Sugestie: Rulează această logică doar dacă nu a fost deja configurată manual
+# Sync num_vehicles per depot based on total available fleet
+# Suggestion: Run this logic only if it wasn't already configured manually
 if "fleet_initialized" not in st.session_state:
     total_vehicles = sum(vt.max_available for vt in st.session_state.vehicle_types)
     num_depots = len(st.session_state.depots)
@@ -73,12 +73,12 @@ with st.sidebar:
     st.subheader("🪵 Europallet parameters")
     pallet_payload = st.slider("Net payload per pallet (kg)", 200, 1200, 800, 50)
 
-# Asigură că clienții noi adăugați sunt incluși în active_customer_ids
+# Ensure newly added customers are included in active_customer_ids
 for c in st.session_state.all_customers:
     if c.id not in st.session_state.active_customer_ids:
         st.session_state.active_customer_ids.add(c.id)
 
-# Recalculează lista activă
+# Recalculate active list
 st.session_state.customers = [
     c for c in st.session_state.all_customers
     if c.id in st.session_state.active_customer_ids
@@ -149,6 +149,12 @@ with tabs[1]:
             )
         }
     )
+    st.caption(
+        "**Daily Capacity (pallets):** Maximum number of pallets that can be dispatched from the depot in a single day, "
+        "reflecting the operational throughput limit of each distribution point. \n"
+        "**Daily Stock (t):** Total weight of goods available at the depot per day, expressed in tonnes, "
+        "representing the inventory constraint that bounds the total load assigned to vehicles operating from that depot."
+    )
     # Sync changes back to session state objects
     for i, row in enumerate(edited_depots):
         st.session_state.depots[i].num_vehicles = row["Vehicles available"]
@@ -167,7 +173,7 @@ with tabs[1]:
     st.subheader("Fleet allocation per depot")
     st.markdown("Specify how many vehicles of each type are stationed at each depot.")
 
-    # Construiește tabelul de alocare
+    # Build allocation table
     alloc_data = []
     for depot in st.session_state.depots:
         row = {"Depot": depot.name}
@@ -175,7 +181,7 @@ with tabs[1]:
             row[vt.name] = depot.fleet_allocation.get(vt.id, 0)
         alloc_data.append(row)
 
-    # Verificare: totalul per tip să nu depășească max_available
+    # Check: total per type cannot exceed max_available
     st.caption("⚠️ Total per vehicle type across all depots cannot exceed **Max available** defined in Fleet & Pallets.")
 
     col_config = {"Depot": st.column_config.TextColumn(disabled=True)}
@@ -195,7 +201,7 @@ with tabs[1]:
         column_config=col_config
     )
 
-    # Validare și sincronizare
+    # Validation and synchronization
     alloc_valid = True
     for vt in st.session_state.vehicle_types:
         total_allocated = sum(row[vt.name] for row in edited_alloc)
@@ -210,7 +216,7 @@ with tabs[1]:
         for i, depot in enumerate(st.session_state.depots):
             for vt in st.session_state.vehicle_types:
                 depot.fleet_allocation[vt.id] = edited_alloc[i][vt.name]
-            # Actualizează și num_vehicles ca suma totală per depozit
+            # Also update num_vehicles as the total sum per depot
             depot.num_vehicles = sum(depot.fleet_allocation.values())
         st.success("✅ Fleet allocation valid and saved.")
 
@@ -327,7 +333,7 @@ with tabs[2]:
             if not new_name.strip():
                 st.error("Store name is required.")
             else:
-                # Geocoding dacă e nevoie
+                # Geocoding if needed
                 if input_method == "📍 Enter address (auto geocode)":
                     if not new_address.strip():
                         st.error("Address is required for geocoding.")

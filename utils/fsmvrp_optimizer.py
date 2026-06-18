@@ -31,10 +31,12 @@ class FleetSolution:
             allocation[vt.id] * vt.fixed_cost
             for vt in vehicle_types if allocation.get(vt.id, 0) > 0
         )
-        self.variable_cost = sum(
-            allocation[vt.id] * vt.cost_per_km * total_km
-            for vt in vehicle_types if allocation.get(vt.id, 0) > 0
-        )
+        if self.total_vehicles > 0:
+            # Calculate weighted average cost per km to apply to the total estimated distance
+            avg_c_km = sum(allocation.get(vt.id, 0) * vt.cost_per_km for vt in vehicle_types) / self.total_vehicles
+            self.variable_cost = avg_c_km * total_km
+        else:
+            self.variable_cost = 0
         self.total_cost = self.fixed_cost + self.variable_cost
         self.utilization = (total_demand / self.total_capacity * 100) if self.total_capacity > 0 else 0
         self.cost_per_ton = (self.total_cost / total_demand) if total_demand > 0 else 0
@@ -44,15 +46,15 @@ class FleetSolution:
         for vt in self.vehicle_types:
             n = self.allocation.get(vt.id, 0)
             if n > 0:
+                # Estimate variable cost share based on vehicle count proportion
+                v_cost = (self.total_km / self.total_vehicles) * n * vt.cost_per_km
                 rows.append({
                     "Vehicle type": vt.name,
                     "Units used": n,
                     "Total capacity (tonnes)": round(n * vt.capacity, 1),
                     "Fixed cost (EUR)": round(n * vt.fixed_cost, 0),
-                    "Variable cost (EUR)": round(n * vt.cost_per_km * self.total_km, 0),
-                    "Total cost per type (EUR)": round(
-                        n * vt.fixed_cost + n * vt.cost_per_km * self.total_km, 0
-                    ),
+                    "Variable cost (EUR)": round(v_cost, 0),
+                    "Total cost per type (EUR)": round(n * vt.fixed_cost + v_cost, 0),
                 })
         return rows
 
@@ -157,7 +159,7 @@ def get_best_vehicle_for_route(
 
     for vt in vehicle_types:
         if vt.capacity >= demand:
-            if needs_refrigeration and not vt.is_refrigerated:
+            if needs_refrigeration != vt.is_refrigerated:
                 continue
             if current_usage is not None:
                 used = current_usage.get(vt.id, 0)
@@ -186,7 +188,7 @@ def _fixed_cost_for_demand(
     """
     candidates = [
         vt for vt in vehicle_types
-        if vt.capacity >= demand and (not needs_refrigeration or vt.is_refrigerated)
+        if vt.capacity >= demand and (needs_refrigeration == vt.is_refrigerated)
     ]
     if not candidates:
         # No single vehicle can handle this demand — return infinity to block the merge
@@ -263,6 +265,10 @@ def solve_fsmvrp_combined_savings(
 
                 ri = current_routes[i]
                 rj = current_routes[j]
+
+                # Avoid merging routes with different refrigeration requirements
+                if ri['needs_refrigeration'] != rj['needs_refrigeration']:
+                    continue
 
                 combined_customers    = ri['customers'] + rj['customers']
                 combined_demand       = ri['demand'] + rj['demand']

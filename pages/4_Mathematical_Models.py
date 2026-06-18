@@ -42,6 +42,9 @@ with tab1:
 
     **Impact:** Compared to naive routing (one vehicle per customer), 
     Clarke-Wright Savings typically achieves **15–30% distance reduction**.
+    *Note: These efficiency gains are most significant in large-scale networks with high customer density and many nodes. 
+    In small instances with few locations, the optimization potential is naturally lower as the number of 
+    possible routing combinations is limited.*
     """)
     st.markdown("---")
     st.markdown(r"""
@@ -177,7 +180,7 @@ with tab2:
     leasing contracts span months or years. A suboptimal fleet mix can cost tens of 
     thousands of euros annually in excess fixed costs or inefficient routing.
 
-    **Key insight:** Minimizing distance ≠ minimizing cost. A solution using many 
+    **Insight:** Minimizing distance ≠ minimizing cost. A solution using many 
     small vehicles may travel less total distance but cost more due to higher 
     cumulative fixed costs than fewer large vehicles.
     """)
@@ -187,7 +190,7 @@ The FSMVRP extends the classical VRP by introducing **vehicle heterogeneity as a
 The objective is to minimize total costs consisting of fixed acquisition/leasing costs and
 vehicle-dependent operational costs.
 
-The key distinction from the classical VRP lies in the cost structure:
+The distinction from the classical VRP lies in the cost structure:
 - **Fixed costs $F_k$** — acquisition or leasing costs for each vehicle type $k$ that leaves the depot (node 0) to start a route
 - **Variable costs $c_{ijk}$** — operational cost of traversing arc $(i,j)$ with vehicle type $k$,
   typically proportional to distance and vehicle-specific consumption rates
@@ -321,7 +324,7 @@ where $\text{load}$ = current vehicle load, $d_j$ = demand of customer $j$, $Q_k
     """)
 
     st.markdown("---")
-    st.subheader("Clarke-Wright vs Nearest Neighbor — Key Differences")
+    st.subheader("Clarke-Wright vs Nearest Neighbor — Differences")
     st.markdown(r"""
 Both algorithms solve the same problem (construct feasible VRP routes) but use fundamentally 
 different strategies:

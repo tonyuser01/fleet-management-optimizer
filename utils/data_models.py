@@ -5,6 +5,7 @@ for the fleet management application.
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import math
+import re
 
 
 # ── Europallet specification ──────────────────────────────────────────────────
@@ -125,6 +126,15 @@ class Route:
         cap  = self.vehicle_type.max_pallets(pallet, payload_per_pallet_kg)
         return (used / cap * 100) if cap > 0 else 0.0
 
+def clean_name(name: str) -> str:
+    """Removes virtual suffixes like (📦 P1) or (❄️ P2)."""
+    # Replace (❄️ P1) with (❄️) and (📦 P1) with (📦)
+    name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
+    name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
+    # Remove any other remaining (P1), (P2) suffix
+    name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
+    return name.strip()
+
 
 # ── Sample data: Bucharest distribution network ───────────────────────────────
 # All coordinates verified on OpenStreetMap / Google Maps
@@ -143,7 +153,7 @@ DEPOTS_BUCHAREST = [
           fleet_allocation={0: 2, 1: 2, 2: 1, 3: 1}),
 
     Depot(2, "D3 — Depot Chiajna",
-          lat=44.5483120000, lon=26.0798340000,
+          lat=44.4424745543, lon=25.9419712582,
           address="Calea București 1, Chiajna, Ilfov",
           capacity=500, num_vehicles=3, daily_stock_tonnes=50.0,
           fleet_allocation={0: 2, 1: 1, 2: 1, 3: 0}),
@@ -192,13 +202,13 @@ CUSTOMERS_BUCHAREST = [
              demand_ambient=2.0),
 
     Customer(8,  "Store Drumul Taberei",
-             lat=44.4245120000, lon=26.0401210000,
-             address="Bulevardul Timișoara 26, Sector 6",
+             lat=44.4215000000, lon=26.0235000000,
+             address="Bulevardul Drumul Taberei 44, Sector 6",
              demand_ambient=4.0),
 
     Customer(9,  "Store Militari",
-             lat=44.4512120000, lon=26.0524120000,
-             address="Calea Crângași 10, Sector 6",
+             lat=44.4352000000, lon=26.0305000000,
+             address="Bulevardul Iuliu Maniu 19, Sector 6",
              demand_ambient=3.5),
 
     Customer(10, "Store Colentina",
@@ -227,8 +237,8 @@ CUSTOMERS_BUCHAREST = [
              demand_ambient=2.5),
 
     Customer(15, "Store Giulesti",
-             lat=44.4642120000, lon=26.0301210000,
-             address="Calea Giulești 285, Sector 6",
+             lat=44.4550000000, lon=26.0450000000,
+             address="Calea Giulești 125, Sector 6",
              demand_ambient=3.5),
 
     Customer(16, "Store Floreasca",
@@ -238,7 +248,7 @@ CUSTOMERS_BUCHAREST = [
 
     Customer(17, "Store Dorobanti",
              lat=44.4471210000, lon=26.0972120000,
-             address="Bulevardul Dorobanților 5, Sector 1",
+             address="Calea Dorobanților 5, Sector 1",
              demand_ambient=3.0),
 
     Customer(18, "Store Obor",

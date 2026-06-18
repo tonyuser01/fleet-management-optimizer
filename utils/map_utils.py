@@ -10,14 +10,14 @@ from utils.data_models import Depot, Customer, Route
 
 DEPOT_COLORS = ["darkblue", "darkred", "darkgreen", "purple", "orange"]
 ROUTE_COLORS = [
-    "#E94560",  # roșu aprins
-    "#2196F3",  # albastru
-    "#FF9800",  # portocaliu
-    "#9C27B0",  # violet
+    "#E94560",  # bright red
+    "#2196F3",  # blue
+    "#FF9800",  # orange
+    "#9C27B0",  # purple
     "#00BCD4",  # cyan
-    "#F44336",  # roșu închis
-    "#4CAF50",  # verde
-    "#FF5722",  # portocaliu închis
+    "#F44336",  # dark red
+    "#4CAF50",  # green
+    "#FF5722",  # dark orange
     "#673AB7",  # indigo
     "#009688",  # teal
 ]
@@ -25,10 +25,10 @@ ROUTE_COLORS = [
 
 def clean_name(name: str) -> str:
     """Removes virtual suffixes like (📦 P1) or (❄️ P2)."""
-    # Înlocuiește (❄️ P1) cu (❄️) și (📦 P1) cu (📦)
+    # Replace (❄️ P1) with (❄️) and (📦 P1) with (📦)
     name = re.sub(r'\((❄️)\s*P\d+\)', r'(\1)', name)
     name = re.sub(r'\((📦)\s*P\d+\)', r'(📦)', name)
-    # Scoate orice alt sufix (P1), (P2) rămas
+    # Remove any other remaining (P1), (P2) suffixes
     name = re.sub(r'\s*\([^)]*P\d+\)\s*$', '', name)
     return name.strip()
 
@@ -50,7 +50,7 @@ def build_map(
         control_scale=True
     )
 
-    # Feature groups — liniile se adaugă direct pe m, markerii în feature groups
+    # Feature groups — lines are added directly on m, markers in feature groups
     fg_routes    = folium.FeatureGroup(name="🛣️ Routes",    show=True)
     fg_customers = folium.FeatureGroup(name="📦 Customers",  show=True)
     fg_depots    = folium.FeatureGroup(name="🏭 Depots",     show=True)
@@ -132,11 +132,11 @@ def build_map(
                 + f"<b>{route.depot.name}</b> (return)"
             )
 
-            # Grosimi alternante: 6, 4, 6, 4... ca rutele suprapuse să fie vizibile
+            # Alternating weights: 6, 4, 6, 4... so overlapping routes are visible
             weight = 6 if i % 2 == 0 else 4
 
-            # Linie principală — adăugată DIRECT pe hartă (nu în fg_routes)
-            # Garantează că liniile sunt randate primele, sub orice marker
+            # Main line — added DIRECTLY on the map (not in fg_routes)
+            # Guarantees lines are rendered first, under any marker
             folium.PolyLine(
                 locations=coords,
                 color=color,
@@ -163,7 +163,7 @@ def build_map(
                 )
             ).add_to(m)
 
-            # AntPath animat — direct pe hartă
+            # Animated AntPath — direct on map
             plugins.AntPath(
                 locations=coords,
                 color=color,
@@ -174,7 +174,7 @@ def build_map(
                 pulse_color="#ffffff"
             ).add_to(m)
 
-            # Număr rută la mijlocul traseului — în fg_routes
+            # Route number at the middle of the track — in fg_routes
             mid_idx = len(coords) // 2
             mid_lat, mid_lon = coords[mid_idx]
             folium.Marker(
@@ -196,7 +196,7 @@ def build_map(
                 tooltip=f"Route {i+1}"
             ).add_to(fg_routes)
 
-            # Număr stop pe fiecare client — în fg_routes
+            # Stop number for each customer — in fg_routes
             for j, c in enumerate(route.customers):
                 folium.Marker(
                     location=[c.lat, c.lon],
@@ -241,7 +241,7 @@ def build_map(
             </div>"""
         ))
 
-    # Feature groups — routes (jos) → customers → depots (sus)
+    # Feature groups — routes (bottom) → customers → depots (top)
     fg_routes.add_to(m)
     fg_customers.add_to(m)
     fg_depots.add_to(m)

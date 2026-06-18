@@ -120,7 +120,18 @@ st.info("""
 st.markdown("---")
 st.subheader("5. Final Conclusions")
 st.markdown("""
-The application developed in this research demonstrates that the MDVRP and FSMVRP models are not only theoretically sound but also practically implementable and operationally useful. The application thus fulfills the practical objective: to translate the theoretical models of fleet management optimization into a tool that is directly applicable to the operational challenges faced by a distributor.
+The application developed in this research demonstrates that the MDVRP and FSMVRP models 
+are not only theoretically sound but also practically implementable and operationally useful.
+""")
+
+st.markdown("**Returning to the research questions:**")
+
+st.markdown(f"""
+| Research Question | Conclusion |
+|---|---|
+| What are the main deficiencies in current fleet management practices? | Unstructured route planning, homogeneous fleet assumptions, and single-depot configurations generate avoidable costs through route overlaps, under-utilised capacity, and excessive empty running. |
+| How can mathematical models address these deficiencies? | The MDVRP provides a structured framework for simultaneous depot-customer assignment and route optimisation across {len(depots)} depots, while the FSMVRP determines the optimal fleet composition across {len(vehicle_types)} vehicle types to minimise total ownership and operational cost. |
+| To what extent can these models translate theory into operational improvements? | The implemented application confirms that both models are directly applicable to a real distribution network and can predict, to a certain extent, operational outcomes and identify improvement opportunities. However, the models operate under deterministic assumptions and cannot fully account for the human factor — driver behaviour, real-time decision-making, and on-site variability — which remain outside the scope of mathematical optimisation. |
 """)
 
 st.caption(

@@ -1,45 +1,45 @@
 # 🚚 Fleet Management Optimizer
 
 **Scientific Research — Fleet Management for a General Merchandise Distributor**  
-MSc Transport Management · Faculty of Transport · National University of Science and Technology POLITEHNICA Bucharest · 2024-2026
+MSc Transport Management · Faculty of Transport · National University of Science and Technology POLITEHNICA Bucharest · 2024–2026
 
 ---
 
 ## Overview
 
-An interactive web application for optimizing the fleet management of a general merchandise distributor, implementing mathematical vehicle routing models:
+An interactive web application for the optimisation of fleet management operations for a general merchandise distributor. The application implements and compares two mathematical vehicle routing models:
 
 - **MDVRP** — Multi-Depot Vehicle Routing Problem
 - **FSMVRP** — Fleet Size and Mix Vehicle Routing Problem
-- **Real-map visualization** via Folium (OpenStreetMap) with animated routes
+
 
 ---
 
-## Project structure
+## Project Structure
 
 ```
 fleet_management/
-├── app.py                          # Streamlit entry point — home page
+├── app.py                            # Streamlit entry point — home page
 ├── requirements.txt
 ├── README.md
 ├── pages/
-│   ├── 1_Map_and_Data.py           # Interactive map, depot/store config, fleet allocation
-│   ├── 2_MDVRP_Solver.py           # MDVRP solver with route map visualization
-│   ├── 3_FSMVRP_Optimizer.py       # Fleet optimizer & sensitivity analysis
-│   ├── 4_Mathematical_Models.py    # Full mathematical documentation
-│   ├── 5_Route_Timeline.py         # Delivery schedule and pallet tracking
-│   └── 6_Conclusions_and_Results.py # Research questions answered from simulation
+│   ├── 1_Map_and_Data.py             # Interactive map, depot/store configuration, fleet allocation
+│   ├── 2_MDVRP_Solver.py             # MDVRP solver with animated route visualisation
+│   ├── 3_FSMVRP_Optimizer.py         # Fleet optimiser and sensitivity analysis
+│   ├── 4_Mathematical_Models.py      # Full mathematical formulations and algorithm documentation
+│   ├── 5_Route_Timeline.py           # Step-by-step delivery schedule and pallet tracking
+│   └── 6_Conclusions_and_Results.py  # Research conclusions drawn from simulation results
 └── utils/
     ├── __init__.py
-    ├── data_models.py              # Data classes + Bucharest sample data
-    ├── mdvrp_algorithms.py         # NN, Clarke-Wright Savings, 2-opt, refrigeration validation
-    ├── fsmvrp_optimizer.py         # Combined Savings, fleet enumeration optimizer
-    └── map_utils.py                # Folium map builder
+    ├── data_models.py                # Data classes and Bucharest reference dataset
+    ├── mdvrp_algorithms.py           # Nearest Neighbour, Clarke-Wright Savings, 2-opt, refrigeration validation
+    ├── fsmvrp_optimizer.py           # Combined Savings heuristic and fleet enumeration optimiser
+    └── map_utils.py                  # Folium map builder
 ```
 
 ---
 
-## Installation & running
+## Installation and Setup
 
 ### 1. Clone the repository
 
@@ -72,90 +72,92 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The app opens automatically at `http://localhost:8501`
+The application opens automatically at `http://localhost:8501`.
 
 ---
 
-## Mathematical models
+## Mathematical Models
 
-### MDVRP — Objective function
+### MDVRP — Objective Function
 
 $$\min \sum_{k \in K} \sum_{(i,j) \in A} c_{ij} \cdot x_{ijk}$$
 
 **Constraints:**
-- Customer coverage: each customer visited exactly once
+- Each customer is visited exactly once
 - Vehicle capacity: `Σ d_i · y_ik ≤ Q_k`
-- Flow conservation: vehicle enters and exits each node
-- Depot assignment: vehicle departs from and returns to its assigned depot
-- Load balancing: vehicle availability constraint per depot (M_d)
+- Flow conservation at each node
+- Vehicles depart from and return to their assigned depot
+- Vehicle availability per depot: `M_d` constraint (load balancing)
 
-### FSMVRP — Objective function
+### FSMVRP — Objective Function
 
 $$\min \sum_{t \in T} f_t \cdot n_t + \sum_{k \in K} \sum_{(i,j) \in A} c_{ij} \cdot x_{ijk}$$
 
-### Combined Savings (CS) — FSMVRP heuristic
+### Combined Savings (CS) — FSMVRP Heuristic
 
 $$CS(i,j) = s_{ij} + F(Z_i) + F(Z_j) - F(Z_i + Z_j)$$
 
 where $F(Z)$ is the fixed cost of the smallest vehicle capable of serving demand $Z$.
 
-### Customer-Depot Assignment
+### Customer–Depot Assignment
 
 $$\text{depot}(i) = \arg\min_{d \in D} \; \text{Haversine}(d, i)$$
 
 ---
 
-## Implemented algorithms
+## Implemented Algorithms
 
 | Algorithm | Complexity | Description |
 |---|---|---|
-| Nearest Neighbor | O(n²) | Greedy: always visit the nearest unserved customer |
-| Clarke-Wright Savings | O(n² log n) | Merge routes using `s(i,j) = c(d,i) + c(d,j) - c(i,j)` |
-| 2-opt Local Search | O(n²) per iteration | Reverse route segments for local improvement |
-| Combined Savings (CS) | O(n²) per iteration | FSMVRP-aware merging with vehicle cost integration |
-| FSMVRP Enumeration | O(Π N_t^max) | Exact enumeration for small instances |
+| Nearest Neighbour | O(n²) | Greedy construction: visit the nearest unserved customer at each step |
+| Clarke-Wright Savings | O(n² log n) | Merge routes based on `s(i,j) = c(d,i) + c(d,j) - c(i,j)` |
+| 2-opt Local Search | O(n²) per iteration | Reverse route sub-sequences to eliminate crossings |
+| Combined Savings (CS) | O(n²) per iteration | FSMVRP-aware merging with vehicle fixed-cost integration |
+| FSMVRP Enumeration | O(Π N_t^max) | Exact enumeration of fleet compositions for small instances |
 
 ---
 
-## Application modules
+## Application Modules
 
 ### Module 1 — Map & Data
-- Depot and customer visualization on OpenStreetMap
-- Interactive fleet allocation per depot (vehicles by type)
-- Add new customers via address geocoding or manual coordinates
-- Europallet specifications and vehicle technical details
-- Origin-Destination distance matrix with color coding
+- Depot and customer visualisation on OpenStreetMap
+- Interactive fleet allocation per depot, by vehicle type
+- Addition of new customers via address geocoding (Nominatim) or manual GPS coordinates
+- Europallet specifications and vehicle technical parameters
+- Origin–destination distance matrix with colour coding
+- Fleet mismatch validation: alerts the user when the selected vehicle type cannot serve all demand categories (ambient/refrigerated)
 
 ### Module 2 — MDVRP Solver
-- Configurable algorithm and vehicle type selection (including Mixed Fleet)
+- Configurable routing algorithm and vehicle type selection, including Mixed Fleet mode
 - Animated routes on map (AntPath) with numbered stops and direction arrows
-- Detailed route sequences with depot → customer → depot format
+- Detailed route sequences in depot → customer → depot format
 - Side-by-side algorithm comparison with Clarke-Wright Efficiency Index
-- Load Balancing (M_d constraint) and refrigeration assignment validation
+- Load balancing (`M_d` constraint) and refrigeration assignment validation
 
 ### Module 3 — FSMVRP Optimizer
-- Automatic demand and distance calculation from network data
-- Fleet composition optimization (4 vehicle types, 3 objectives)
-- Cost breakdown chart (fixed vs variable)
-- Top 10 feasible solutions with best solution highlighted
-- Sensitivity analysis with automatic conclusions (50%–150% demand range)
+- Automatic demand and distance aggregation from the active network
+- Fleet composition optimisation across four vehicle types and three strategic objectives
+- Cost breakdown chart (fixed vs. variable costs)
+- Top 10 feasible fleet configurations with the optimal solution highlighted
+- Sensitivity analysis over the 50%–150% demand range with automatic conclusions
 - Combined Savings operational routing with multi-depot support
 
 ### Module 4 — Mathematical Models
-- Full MDVRP and FSMVRP formulations with LaTeX
-- Academic context: what each model solves and why it is useful
-- Algorithm comparison table (NN vs Clarke-Wright)
-- Performance metrics with formulas
+- Complete MDVRP and FSMVRP formulations with LaTeX notation
+- Academic context: problem definitions and practical relevance
+- Algorithm comparison (Nearest Neighbour vs. Clarke-Wright Savings)
+- Transport performance metrics with formulas
 
 ### Module 5 — Route Timeline
-- Step-by-step delivery schedule with arrival/departure times
-- Dynamic service time based on pallets to unload
-- Realistic travel time model with urban overhead
-- Individual movement cyclograms (distance vs time) per route
-- Multi-trip reload logic for routes exceeding vehicle capacity
+- Step-by-step delivery schedule with estimated arrival and departure times per stop
+- Dynamic service time calculation based on pallets to be unloaded
+- Realistic urban travel time model with peak-hour overhead (signal delay doubling, 30% speed reduction)
+- Individual movement cyclograms (distance vs. time) per route
+- Multi-trip reload logic for routes that exceed vehicle capacity
 
 ### Module 6 — Conclusions & Results
-- Summary of practical vs. theoretical optimization benefits
+- Research questions answered from simulation output
+- Comparison of practical vs. theoretical optimisation benefits across models
 
 ---
 
@@ -163,42 +165,42 @@ $$\text{depot}(i) = \arg\min_{d \in D} \; \text{Haversine}(d, i)$$
 
 | Library | Version | Purpose |
 |---|---|---|
-| `streamlit` | ≥1.32 | Web application framework |
-| `folium` | ≥0.16 | Interactive maps (OpenStreetMap) |
-| `streamlit-folium` | ≥0.20 | Folium integration in Streamlit |
-| `plotly` | ≥5.20 | Interactive charts |
-| `pandas` | ≥2.0 | Data processing |
-| `numpy` | ≥1.26 | Numerical computations |
-| `requests` | ≥2.31 | Address geocoding via Nominatim |
+| `streamlit` | ≥ 1.32 | Web application framework |
+| `folium` | ≥ 0.16 | Interactive map rendering (OpenStreetMap) |
+| `streamlit-folium` | ≥ 0.20 | Folium integration within Streamlit |
+| `plotly` | ≥ 5.20 | Interactive charts and graphs |
+| `pandas` | ≥ 2.0 | Data processing and tabular display |
+| `numpy` | ≥ 1.26 | Numerical computations |
+| `requests` | ≥ 2.31 | Address geocoding via Nominatim API |
 
 ---
 
-## Reference scenario
+## Reference Scenario
 
-The implemented scenario simulates a general merchandise distributor in **Bucharest, Romania**:
+The implemented scenario simulates a general merchandise distributor operating in **Bucharest, Romania**:
 
-- **3 depots**: D1 — Bucharest North, D2 — Bucharest South, D3 — Ilfov-Otopeni
-- **20 customers**: stores across all districts and peri-urban areas (expandable)
-- **4 vehicle types**: Small (3.5t), Medium (7t), Heavy Duty (24t), Refrigerated (5t)
+- **3 depots**: D1 — Bucharest North, D2 — Bucharest South, D3 — Chiajna (Logistics Hub West)
+- **20 customers**: stores distributed across all districts and peri-urban areas
+- **4 vehicle types**: Small (3.5 t), Medium (7 t), Heavy Duty (24 t), Refrigerated (5 t)
 - **Real GPS coordinates** based on Bucharest geography
-- **Fleet allocation per depot**: configurable in Map & Data → Depot directory
+- **Fleet allocation per depot**: configurable in Map & Data → Depot Directory
 
 ---
 
-## Academic context
+## Academic Context
 
-This application was developed as part of the **dissertation research**:
+This application was developed as part of the following dissertation research:
 
 > *"Scientific Research: Fleet Management for a General Merchandise Distributor"*  
 > MSc Transport Management  
 > Faculty of Transport — National University of Science and Technology POLITEHNICA Bucharest  
-> Academic year 2024-2026
+> Academic year 2024–2026
 
 ---
 
 ## License
 
-Free for academic and educational use. No license granted.
+This project is provided for academic and educational purposes. All rights reserved. No licence is granted for commercial use, redistribution, or modification without the explicit written consent of the author.
 
 ---
 
