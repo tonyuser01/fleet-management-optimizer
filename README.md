@@ -165,6 +165,7 @@ $$\text{depot}(i) = \arg\min_{d \in D} \; \text{Haversine}(d, i)$$
 
 | Library | Version | Purpose |
 |---|---|---|
+| `Python` | ≥ 3.10 | Runtime environment |
 | `streamlit` | ≥ 1.32 | Web application framework |
 | `folium` | ≥ 0.16 | Interactive map rendering (OpenStreetMap) |
 | `streamlit-folium` | ≥ 0.20 | Folium integration within Streamlit |
